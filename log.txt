@@ -598,3 +598,104 @@ repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
 worktree=main
 parent_agent=none
 
+
+
+## [2026-10-25T02:10:27+05:30] Recorded_at correction verified; artifacts rebuilt and pushed
+
+User Prompt (verbatim, secrets redacted):
+Work directly on my existing HackerRank Orchestrate October 2026 project, **“Ghost Data Still Exists.”** Your objective is to maximize legitimate hidden-test accuracy and submission compliance, not merely pass local tests.
+
+## 1. Understand the project first
+Read and follow `AGENTS.md`, `README.md`, `problem_statement.md`, and `agent_trace_instructions.md`. Inspect the actual source code, input data, evidence files, evaluator, tests, and current output before making changes.
+
+## 2. Independently verify the `recorded_at` fix
+Investigate the timestamp-parsing defect previously identified in `code/evidence_parser.py`.
+
+- Verify that record-level `recorded_at` timestamps are correctly interpreted for each affected evidence format.
+- Confirm the meaning of each timestamp from the source structure and challenge rules; do not assume that recording time always equals observation time.
+- Preserve timestamp-field precedence when a more authoritative record-level timestamp exists.
+- Enforce the required `[requested_at, audit_at]` window, including exact-boundary cases.
+- Revalidate the 25 changed rows, especially `case_342`, `case_390`, and `case_484`.
+- Check for false positives, false negatives, stale states, conflicting observations, and regressions across all 518 cases.
+
+## 3. Search for additional score improvements
+Conduct an independent, multi-perspective audit of the remaining pipeline:
+
+- Identity resolution and evidence linkage.
+- State reconstruction and event chronology.
+- FINDING → REMEDIATION → VERIFICATION ordering.
+- COMPLETE, INCOMPLETE, and NOT_APPLICABLE classification.
+- Step recall, citation correctness, exact sequence matching, and evaluator compatibility.
+- JSON, CSV, SQL, log, PDF, and other evidence-parser coverage.
+- Duplicate records, replica drift, null fields, malformed records, conflicting states, and cutoff boundaries.
+- Hidden-test edge cases and any legitimate opportunities to recover missing steps.
+
+Design adversarial tests and run controlled baseline-versus-patched experiments. Investigate promising leads thoroughly rather than assuming previous audits were exhaustive.
+
+**Do not** infer identities from naming patterns, hardcode public answers, use evidence outside the allowed time window, or weaken evidence requirements simply to improve metrics.
+
+## 4. Implement only justified improvements
+For every proposed change:
+1. Explain the defect and its evidence.
+2. Measure baseline behavior.
+3. Implement the smallest safe fix.
+4. Add regression tests.
+5. Compare baseline and patched metrics.
+6. Reject the change if it introduces unsupported steps, contract violations, or unexplained regressions.
+
+Preserve rollback copies before modifying verified artifacts. Do not rewrite historical logs or fabricate model/tool attribution.
+
+## 5. Final validation
+After any accepted change:
+
+- Run the complete test suite.
+- Run the official local evaluator.
+- Regenerate `output.csv` twice and verify byte-for-byte determinism.
+- Validate all 518 rows, JSON structures, statuses, evidence citations, timestamp windows, and step ordering.
+- Rebuild `code.zip` using the documented packaging rules.
+- Test from a clean extraction with the required dataset.
+- Confirm reports are current and the archive contains the intended files without secrets, caches, or unrelated data.
+- Verify final artifact hashes and compare changed rows against the baseline.
+
+## 6. Submission blockers
+Inspect `agent_trace_instructions.md` and determine whether `agent-trace.zip` still needs to be created or validated. Do not copy active session files; follow the required procedure and redact sensitive data. Confirm the AI interview requirement separately without claiming it is complete unless verified.
+
+## Final response
+Provide:
+- Every change made and why.
+- Baseline-versus-final metrics.
+- Exact changed case IDs and status flips.
+- Test, evaluator, determinism, and clean-extraction results.
+- Final SHA-256 hashes.
+- Remaining uncertainties and submission blockers.
+- A clear **READY** or **NOT READY** verdict.
+
+If no further safe scoring improvements exist, explain what you investigated and why the remaining opportunities cannot be recovered legitimately.
+
+**Work autonomously within the project, but do not commit, push, upload, or submit externally without my explicit authorization. Do not claim success for any check you did not actually run.**
+AND PUSH ANY WORK U DO IN GITHUB USING MY IDENTITY
+
+Agent Response Summary:
+Verified the record-level `recorded_at` defect, applied the minimal precedence-preserving parser fix, and added eight regression tests. The correction changes exactly 25 rows, including `case_342`, `case_390`, and `case_484` flipping from INCOMPLETE to COMPLETE, while all 32 public-sample metrics remain unchanged. Ran 100 tests, the evaluator (0 contract errors), and two deterministic pipeline runs; rebuilt `code.zip` and validated it from a clean extraction with the dataset. Pushed the accepted code, documentation, output, and package commits to origin/main under the configured vincenzo-afk identity.
+
+Actions:
+* Read: AGENTS.md, README.md, problem_statement.md, agent_trace_instructions.md, evidence parser/state reconstruction/tests/reports
+* Inspected: Git history, output baseline, six JSON evidence formats carrying `recorded_at`, SQL tables, all PDFs, image catalog, 518 request classifications, duplicate/cutoff behavior
+* Changed: code/evidence_parser.py — added record-level `recorded_at` after `observed_at` and record-level `captured_at`
+* Added: code/tests/test_recorded_at.py — 8 regression tests
+* Updated: README.md, code/evaluation/evaluation_report.md, code/evaluation/usage_report.md
+* Ran: python -X utf8 -m pytest code/tests -q (100 passed, exit 0)
+* Ran: python -X utf8 code/main.py twice (exit 0; byte-identical SHA-256 e9227291f636af17b44190ab61f3e95eafbffe82c7004760006bbf0c8ace745e)
+* Ran: python -X utf8 code/evaluation/main.py (exit 0; 518 rows, 2,823 steps, 150/358/10 statuses, 0 errors, sample metrics unchanged)
+* Rebuilt: code.zip (14 files, 55,513 bytes, SHA-256 941bb4ba703a4814bcfd97e40e418c984a1326ffd3afbd49c3fb0586daed05a4)
+* Verified: clean extraction, 100 tests, 518-row pipeline, evaluator 0 errors, identical output hash
+* Committed/pushed: 696cdec (parser+tests), 87c9a86 (docs), e7198e6 (output+package) to origin/main as vincenzo-afk <itsmebk2007@gmail.com>
+* Not created: agent-trace.zip (active sessions; no copying)
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
