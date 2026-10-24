@@ -185,6 +185,23 @@ class TestEvidenceAfterAuditCutoff:
         assert res.deletion_status == "COMPLETE"
         assert all(s.resource_id != "search_100" for s in res.steps)
 
+    def test_record_timestamps_override_manifest_export_time(self, dataset_bundle):
+        _, corpus = dataset_bundle
+        observations = {
+            (r.evidence_id, r.resource_id): r.captured_at
+            for r in corpus.records
+            if (r.evidence_id, r.resource_id) in {
+                ("evidence_06", "account_3960"),
+                ("evidence_06", "audit_record_4902"),
+                ("evidence_02", "audit_record_4128"),
+            }
+        }
+        assert observations == {
+            ("evidence_06", "account_3960"): _parse_iso("2026-09-16T08:57:34Z"),
+            ("evidence_06", "audit_record_4902"): _parse_iso("2026-09-16T08:52:59Z"),
+            ("evidence_02", "audit_record_4128"): _parse_iso("2026-09-15T12:00:00Z"),
+        }
+
 
 # ---------------------------------------------------------------------------
 # 3. Missing Evidence

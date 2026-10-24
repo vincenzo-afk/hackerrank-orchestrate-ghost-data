@@ -19,6 +19,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+# Late-imported helpers for the end-to-end pipeline (optional at import time)
+try:
+    from evidence_parser import load_evidence_corpus, EvidenceCorpus
+    from state_reconstruction import reconstruct_case_state, AuditStep
+except Exception:  # pragma: no cover - keep module importable in minimal envs
+    load_evidence_corpus = None  # type: ignore
+    EvidenceCorpus = None  # type: ignore
+    reconstruct_case_state = None  # type: ignore
+    AuditStep = None  # type: ignore
+
 # Reconfigure stdout/stderr to UTF-8 so Japanese/accents print cleanly on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
     try:
@@ -36,16 +46,16 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 # ---------------------------------------------------------------------------
 
 def _find_repo_root() -> Path:
-    """Walk up from this file to find the directory containing AGENTS.md."""
-    candidate = Path(__file__).resolve().parent
+    """Locate the directory holding dataset/ (accepts AGENTS.md when present)."""
+    here = Path(__file__).resolve().parent
+    candidate = here
     for _ in range(10):
         if (candidate / "AGENTS.md").exists():
             return candidate
+        if (candidate / "dataset" / "deletion_requests.csv").exists():
+            return candidate
         candidate = candidate.parent
-    raise RuntimeError(
-        "Cannot locate repository root (no AGENTS.md found). "
-        "Run from within the repository."
-    )
+    return here.parent
 
 
 REPO_ROOT = _find_repo_root()
@@ -339,52 +349,114 @@ def _check_unique_ids(ids: list[str], label: str) -> None:
 # Module 2: Request classification
 # ---------------------------------------------------------------------------
 
-# Deletion-authorizing keywords / phrases translated to their meaning.
-# The classifier uses a scored keyword approach — no external LLM needed for
-# the sample set. All 32 sample cases are deletion requests, so the classifier
-# must be conservative about returning False.
+# Deletion-intent detection.
 #
-# Non-deletion intents that look similar:
-#   - "please check / inspect / confirm" alone (audit request, not deletion)
-#   - "access my data / data export" (access request)
-#   - "opt-out of marketing" (marketing opt-out)
-#   - "correct / update" (correction request)
+# A request authorizes deletion only when a positive (non-negated) statement
+# asks for the account/profile/records to be deleted, erased, removed, closed,
+# purged or wiped. Requests in the dataset also mix in non-deletion intents:
+#   - marketing opt-out ("remove me from marketing lists", "stop promotional")
+#   - access/export ("download a copy", "send me a copy", "information request")
+#   - correction ("correct my surname", "change the email address")
+#   - login help ("can't access", "reset the login")
+#   - negated deletion ("not asking for deletion", "do not close", "without removing")
+# The negation and marketing-scope checks run before the decision so a request
+# like "correct it without removing any of my records" is not read as deletion.
 #
-# Deletion keywords (multilingual):
-#   EN: delete, erase, remove, close account, permanently, wipe, purge
-#   ES: eliminar, borrar, cerrar, suprimir, eliminar
-#   FR: suppression, supprimer, effacer, fermer, effacement
-#   JA: 削除 (delete), 消去 (erase), アカウントの削除
+# Deletion verbs (multilingual):
+#   EN: delete, erase, remove, close, purge, wipe
+#   ES/PT: eliminar, exclusão, borrar, cerrar, suprimir, apagar, remover
+#   FR: suppression, supprimer, effacer, fermer, clôturer
+#   JA: 削除, 消去, 抹消
+#   KO: 삭제, 제거, 폐쇄, 탈퇴, 지우
 
-_DELETION_PATTERNS: list[re.Pattern] = [
-    # English — stems without trailing \b so 'removed','erased','closed' all match
-    re.compile(r'\b(delet|eras|remov|clos|purg|wip|permanent)', re.I),
-    # 'gone' in context of account/profile/data disappearance
-    re.compile(r'\b(profile|account|data|records?).{0,40}gone\b', re.I),
-    re.compile(r'\bgone\b.{0,20}(cannot|can.t|no longer)', re.I),
-    # "profile is gone", "fully removed", "already been removed"
-    re.compile(r'\b(gone|absent|cleared|wiped)\b', re.I),
-    # "cannot identify me", records "cannot identify"
-    re.compile(r'\bcannot identify\b', re.I),
-    # Spanish
-    re.compile(r'\b(elimin|borrar|cerrar|suprim|borra)', re.I),
-    # French
-    re.compile(r'\b(suppression|supprimer|effac|fermer)', re.I),
-    # Japanese — deletion/erasure kanji
-    re.compile(r'削除|消去|削れ'),
-    # Indirect English signals
-    re.compile(r'\b(no longer need|want.{0,10}gone|get rid of|take down|clear out)\b', re.I),
-    re.compile(r'\b(close.{0,10}account|account.{0,10}close|shut.{0,10}down.{0,10}account)\b', re.I),
-    re.compile(r'\b(switch off|disable).{0,30}(integrat|sync|data flow)\b', re.I),
-    re.compile(r'\b(account|profile).{0,30}(fully|already).{0,20}(remov|delet|gone)\b', re.I),
+_DELETION_VERB_PATTERNS: list[re.Pattern] = [
+    # English stems (word-start, no trailing boundary so inflections match)
+    re.compile(r'\b(?:delet|eras|remov|clos|purg|wip)', re.I),
+    # Spanish / Portuguese stems
+    re.compile(r'\b(?:elimin|exclus|exclu|borr|cerrar|suprim|apag)', re.I),
+    # French stems
+    re.compile(r'\b(?:suppression|supprim|effac|fermer|clotur|clôtur)', re.I),
+    # Japanese
+    re.compile(r'削除|消去|抹消'),
+    # Korean
+    re.compile(r'삭제|제거|폐쇄|탈퇴|지우'),
 ]
 
-_NON_DELETION_PATTERNS: list[re.Pattern] = [
-    re.compile(r'\b(opt.?out of marketing|unsubscrib|stop.*email|stop.*newsletter)\b', re.I),
-    re.compile(r'\b(correct|update|change|fix).*\b(my (data|info|details|profile))\b', re.I),
-    re.compile(r'\b(access|export|download|copy).*(my )?(data|records|info)\b', re.I),
-    re.compile(r'\b(data.?access|right.?to.?access)\b', re.I),
+# Indirect wording that still authorizes deletion (already-deleted narratives).
+_INDIRECT_DELETION_PATTERNS: list[re.Pattern] = [
+    re.compile(r'\b(?:gone|absent|wiped)\b', re.I),
+    re.compile(r'\b(?:cannot|can.t)\s+(?:identify|be identified)\b', re.I),
+    re.compile(r'\b(?:get rid of|take down|clear out|left behind)\b', re.I),
 ]
+
+# Clauses that mention deletion only to reject it.
+_NEGATION_CUE = re.compile(
+    r"(?:['’]t\b|\bnot\b|\bnever\b|\bwithout\b|\bno\s+(?:deletion|removal|erasure)\b"
+    r"|지\s*마|않|마세요|마십시오)",
+    re.I,
+)
+# "I have not been able to delete my account" is a deletion request, not a refusal.
+_NEGATION_EXEMPTION = re.compile(
+    r"(?:not\s+(?:yet\s+)?(?:been\s+)?able\s+to|unable\s+to|failed\s+to"
+    r"|could\s*n['’]?t|could\s+not|can\s*n['’]?t|cannot|not\s+yet)",
+    re.I,
+)
+_CLAUSE_BOUNDARY = re.compile(r"[.!?;\n]|\bbut\b|\bhowever\b|\bexcept\b", re.I)
+
+# "Remove me from marketing lists" / "stop promotional emails" is an opt-out,
+# not a deletion of the account.
+_MARKETING_OPT_OUT = re.compile(
+    r"\bunsubscrib"
+    r"|\bopt[\s-]?out\b"
+    r"|\b(?:remove|delete|take|drop)\s+(?:me|my\s+(?:name|email|address|details))\s+from\s+"
+    r"(?:[\w'-]+\s+){0,3}(?:marketing|mailing|promotional|newsletter|subscription)"
+    r"|\bstop\s+(?:the\s+|all\s+|your\s+)?(?:promotional|marketing|newsletter)\b"
+    r"|\b(?:promotional|marketing)\s+(?:e-?mails?|messages?)\b",
+    re.I,
+)
+
+_NON_DELETION_INTENT: list[re.Pattern] = [
+    _MARKETING_OPT_OUT,
+    # access / export / copies of data
+    re.compile(
+        r"\b(?:download|export|portable\s+format|copy\s+of|send\s+me\s+a\s+copy"
+        r"|information\s+request|what\s+personal\s+information|right\s+to\s+access"
+        r"|access\s+(?:and|to)\s+.*\b(?:data|records|information))\b",
+        re.I,
+    ),
+    # correction / update of profile fields
+    re.compile(
+        r"\b(?:correct|fix|misspell\w*|out\s+of\s+date|update|change|replace)"
+        r"\b.{0,40}\b(?:name|surname|email|address|phone|number|details|profile|login)\b",
+        re.I,
+    ),
+    # login help
+    re.compile(r"\b(?:can.?t|cannot|unable\s+to)\s+access\b|\breset(?:ting)?\s+(?:the\s+)?(?:login|password)\b", re.I),
+    # explicit keep / continue
+    re.compile(
+        r"\b(?:keep|leave)\b.{0,40}\b(?:account|profile|records?|history)\b"
+        r"|\b(?:continue\s+using|still\s+(?:use|need)\b)",
+        re.I,
+    ),
+]
+
+
+def _clause_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """Return the clause boundaries around text[start:end]."""
+    left = 0
+    for m in _CLAUSE_BOUNDARY.finditer(text, 0, start):
+        left = m.end()
+    m = _CLAUSE_BOUNDARY.search(text, end)
+    right = m.start() if m else len(text)
+    return left, right
+
+
+def _is_negated(text: str, start: int, end: int) -> bool:
+    left, _ = _clause_span(text, start, end)
+    clause = text[left:start]
+    if _NEGATION_EXEMPTION.search(clause):
+        return False
+    return bool(_NEGATION_CUE.search(clause))
 
 
 def classify_request(request_text: str) -> dict:
@@ -399,60 +471,68 @@ def classify_request(request_text: str) -> dict:
     """
     text = request_text.strip()
 
+    marketing_spans = [m.span() for m in _MARKETING_OPT_OUT.finditer(text)]
+
     deletion_hits: list[str] = []
-    for pat in _DELETION_PATTERNS:
-        m = pat.search(text)
-        if m:
+    indirect_hits: list[str] = []
+    rejected_hits: list[str] = []
+
+    for pat in _DELETION_VERB_PATTERNS:
+        for m in pat.finditer(text):
+            start, end = m.span()
+            if any(s <= start < e for s, e in marketing_spans):
+                continue
+            if _is_negated(text, start, end):
+                rejected_hits.append(m.group(0))
+                continue
             deletion_hits.append(m.group(0))
 
+    for pat in _INDIRECT_DELETION_PATTERNS:
+        for m in pat.finditer(text):
+            start, end = m.span()
+            if any(s <= start < e for s, e in marketing_spans):
+                continue
+            if _is_negated(text, start, end):
+                rejected_hits.append(m.group(0))
+                continue
+            indirect_hits.append(m.group(0))
+
     non_deletion_hits: list[str] = []
-    for pat in _NON_DELETION_PATTERNS:
+    for pat in _NON_DELETION_INTENT:
         m = pat.search(text)
         if m:
-            non_deletion_hits.append(m.group(0))
+            non_deletion_hits.append(m.group(0).strip())
+    if rejected_hits:
+        non_deletion_hits.append("negated deletion: " + ", ".join(rejected_hits))
 
-    has_deletion = len(deletion_hits) > 0
-    has_non_deletion_only = (not has_deletion) and len(non_deletion_hits) > 0
-
-    # Decision logic
-    if has_non_deletion_only:
+    if deletion_hits:
         return {
-            "is_deletion": False,
+            "is_deletion": True,
             "confidence": "high",
-            "matched_deletion_signals": [],
+            "matched_deletion_signals": deletion_hits,
             "matched_non_deletion_signals": non_deletion_hits,
-            "notes": "Non-deletion intent detected; no deletion signals present.",
+            "notes": "Explicit positive deletion instruction.",
         }
 
-    if not has_deletion:
-        # No signals either way — flag as low confidence, treat as ambiguous
+    if indirect_hits:
         return {
-            "is_deletion": False,
-            "confidence": "low",
-            "matched_deletion_signals": [],
-            "matched_non_deletion_signals": [],
-            "notes": (
-                "No deletion or non-deletion signals detected. "
-                "Manual review recommended."
-            ),
+            "is_deletion": True,
+            "confidence": "medium",
+            "matched_deletion_signals": indirect_hits,
+            "matched_non_deletion_signals": non_deletion_hits,
+            "notes": "Deletion confirmed indirectly (state described as already deleted).",
         }
-
-    # Deletion signals present
-    confidence = "high" if len(deletion_hits) >= 2 else "medium"
-    notes = ""
-    if non_deletion_hits:
-        notes = (
-            f"Deletion intent confirmed but also matched non-deletion signals: "
-            f"{non_deletion_hits}. Treating as deletion (deletion intent prevails)."
-        )
-        confidence = "medium"
 
     return {
-        "is_deletion": True,
-        "confidence": confidence,
-        "matched_deletion_signals": deletion_hits,
+        "is_deletion": False,
+        "confidence": "high" if non_deletion_hits else "low",
+        "matched_deletion_signals": [],
         "matched_non_deletion_signals": non_deletion_hits,
-        "notes": notes,
+        "notes": (
+            "No positive deletion instruction; treated as non-deletion."
+            if non_deletion_hits
+            else "No deletion intent detected; treated as non-deletion. Manual review recommended."
+        ),
     }
 
 
@@ -631,6 +711,152 @@ def main() -> None:
             f"  {req.case_id}: {flag} [{clf['confidence']}] "
             f"signals={clf['matched_deletion_signals'][:2]}"
         )
+    print()
+    print("Done. Run tests with: python -m pytest code/tests/ -v")
+
+
+# ---------------------------------------------------------------------------
+# End-to-end pipeline (Task 4)
+# ---------------------------------------------------------------------------
+
+def _serialize_steps(steps) -> str:
+    """Serialize a list of AuditStep (or dicts) into a compact JSON array."""
+    out = []
+    for s in steps:
+        if hasattr(s, "to_dict"):
+            out.append(s.to_dict())
+        else:
+            out.append(s)
+    # Ensure step_no renumbered consecutively
+    for i, d in enumerate(out, 1):
+        d["step_no"] = i
+    return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+
+def audit_request(req, datasets, corpus) -> tuple[str, list, Optional[str]]:
+    """Audit one request. Returns (status, steps, failure_reason)."""
+    if not classify_request(req.request_text).get("is_deletion", False):
+        return "NOT_APPLICABLE", [], None
+
+    fp = resolve_identity(req.email, datasets).fingerprint
+    if fp is None:
+        # Still a deletion request: claiming NOT_APPLICABLE would assert the
+        # person never asked for deletion. Without a resolved identity the
+        # compliant state cannot be proven, so report INCOMPLETE.
+        return "INCOMPLETE", [], "unresolved_identity"
+
+    try:
+        result = reconstruct_case_state(
+            case_id=req.case_id,
+            audit_at=req.audit_at,
+            is_deletion=True,
+            user_identifiers=fp.all_identifiers,
+            corpus=corpus,
+            system_activity=datasets.system_activity,
+            require_evidence=True,
+            not_before=req.requested_at,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"WARN {req.case_id}: reconstruction failed: {exc}", file=sys.stderr)
+        return "INCOMPLETE", [], "reconstruction_error"
+
+    return result.deletion_status, result.steps, None
+
+
+def run_full_pipeline(dataset_dir=None, output_path=None) -> Path:
+    """Run the deletion audit over every evaluation request and write output.csv.
+
+    Returns the path of the written CSV.
+    """
+    if dataset_dir is None:
+        dataset_dir = DATASET_DIR
+    dataset_dir = Path(dataset_dir)
+    if output_path is None:
+        output_path = REPO_ROOT / "output.csv"
+    output_path = Path(output_path)
+
+    datasets = load_datasets(dataset_dir)
+    corpus = load_evidence_corpus(dataset_dir) if load_evidence_corpus else None
+
+    rows = []
+    unresolved = 0
+    pipeline_errors = 0
+    for req in datasets.deletion_requests:
+        status, steps, failure = audit_request(req, datasets, corpus)
+        if failure == "unresolved_identity":
+            unresolved += 1
+        elif failure == "reconstruction_error":
+            pipeline_errors += 1
+
+        rows.append((req.case_id, status, _serialize_steps(steps)))
+
+    rows.sort(key=lambda r: r[0])
+
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(["case_id", "deletion_status", "steps_json"])
+        for cid, status, steps_json in rows:
+            writer.writerow([cid, status, steps_json])
+
+    if unresolved or pipeline_errors:
+        print(
+            f"  WARNING: {unresolved} unresolved identities, "
+            f"{pipeline_errors} reconstruction errors",
+            file=sys.stderr,
+        )
+
+    return output_path
+
+
+def main() -> None:
+    print("Ghost Data Still Exists — Deletion Audit Agent")
+    print(f"Repository root: {REPO_ROOT}")
+    print()
+
+    print("Loading datasets...")
+    try:
+        datasets = load_datasets()
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  deletion_requests: {len(datasets.deletion_requests)} cases")
+    print(f"  sample_requests:   {len(datasets.sample_requests)} cases")
+    print(f"  user_identities:   {len(datasets.identities)} users")
+    print(f"  audit_log entries: {len(datasets.audit_log)}")
+    print(f"  system_activity:   {len(datasets.system_activity)} events")
+    print(f"  deletion_rules:    {len(datasets.deletion_rules)} rules")
+    print(f"  evidence_files:    {len(datasets.evidence_files)} files")
+    print()
+
+    print("Running identity resolution on sample requests...")
+    results = {}
+    for req in datasets.sample_requests:
+        result = resolve_identity(req.email, datasets)
+        results[req.case_id] = result
+        status_str = result.status.upper()
+        if result.fingerprint:
+            print(
+                f"  {req.case_id}: {status_str} ({result.match_type}) "
+                f"-> {result.fingerprint.user_id} ({result.fingerprint.name})"
+            )
+        else:
+            print(f"  {req.case_id}: {status_str} — {result.message}")
+    print()
+
+    print("Running request classification on sample requests...")
+    for req in datasets.sample_requests:
+        clf = classify_request(req.request_text)
+        flag = "DELETE" if clf["is_deletion"] else "NOT_APPLICABLE"
+        print(
+            f"  {req.case_id}: {flag} [{clf['confidence']}] "
+            f"signals={clf['matched_deletion_signals'][:2]}"
+        )
+    print()
+
+    print("Generating output.csv for all evaluation cases...")
+    out_path = run_full_pipeline()
+    print(f"  Written: {out_path}")
     print()
     print("Done. Run tests with: python -m pytest code/tests/ -v")
 

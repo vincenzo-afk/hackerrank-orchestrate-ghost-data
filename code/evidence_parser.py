@@ -64,24 +64,430 @@ def _normalize_system_id(sys_id: str) -> str:
         "search_service": "search_service",
         "search_index_service": "search_service",
         "analytics_platform": "analytics_platform",
+        "analytics_identity_store": "analytics_platform",
         "support_platform": "support_platform",
         "support_replica": "support_platform",
+        "support_storage_service": "support_platform",
         "integration_service": "integration_service",
         "connector_service": "integration_service",
         "backup_service": "backup_service",
+        "backup_restore_service": "backup_service",
         "security_service": "security_service",
         "security_audit_service": "security_service",
         "identity_service": "identity_service",
         "export_service": "export_service",
         "customer_export_service": "export_service",
+        "user_export_store": "export_service",
         "marketing_platform": "marketing_platform",
+        "legal_service": "legal_service",
+        "cache_service": "cache_service",
+        "notification_service": "email_delivery_service",
+        "downstream_delivery_service": "email_delivery_service",
+        "email_delivery_service": "email_delivery_service",
+        "deletion_worker": "deletion_worker",
     }
-    return mapping.get(s, s)
+    if s in mapping:
+        return mapping[s]
+    # Generic fallbacks for exporter names such as "central_observability_export".
+    for needle, target in (
+        ("account", "account_service"),
+        ("profile", "account_service"),
+        ("search", "search_service"),
+        ("analytics", "analytics_platform"),
+        ("support", "support_platform"),
+        ("integration", "integration_service"),
+        ("connector", "integration_service"),
+        ("backup", "backup_service"),
+        ("security", "security_service"),
+        ("audit", "security_service"),
+        ("identity", "identity_service"),
+        ("export", "export_service"),
+        ("marketing", "marketing_platform"),
+        ("legal", "legal_service"),
+        ("cache", "cache_service"),
+        ("delivery", "email_delivery_service"),
+    ):
+        if needle in s:
+            return target
+    return s
+
+
+# Canonical data categories and the raw result/status tokens used in evidence.
+_ALL_CATEGORIES = {
+    "USER_PROFILE",
+    "SECONDARY_IDENTIFIER",
+    "SEARCH_INDEX_ENTRY",
+    "CACHE_ENTRY",
+    "SUPPORT_MESSAGE",
+    "SUPPORT_ATTACHMENT",
+    "ANALYTICS_PROFILE",
+    "PRODUCT_TELEMETRY",
+    "USER_EXPORT",
+    "MARKETING_PROFILE",
+    "EMAIL_DELIVERY_LOG",
+    "SECURITY_AUDIT_LOG",
+    "LEGAL_HOLD_RECORD",
+    "BACKUP_ARCHIVE",
+    "ACCOUNT_TOMBSTONE",
+}
+
+_RESULT_STATES = {
+    "FOUND": "PRESENT",
+    "IDENTIFIABLE": "PRESENT",
+    "PRESENT": "PRESENT",
+    "NOT_FOUND": "ABSENT",
+    "NOTFOUND": "ABSENT",
+    "MISSING": "ABSENT",
+    "DELETED": "ABSENT",
+    "ANONYMIZED": "ANONYMIZED",
+    "REDACTED": "REDACTED",
+    "ACTIVE": "ACTIVE",
+    "ENABLED": "ACTIVE",
+    "DISABLED": "DISABLED",
+    "BLOCKED": "BLOCKED",
+}
+
+# Identifier-bearing fields found across SQL, JSON, log, PDF and image evidence.
+_ID_FIELDS = (
+    "subject_reference",
+    "customer_reference",
+    "user_id",
+    "subject_ref",
+    "lookup_value",
+    "lookup_key",
+    "match_key",
+    "subject_key",
+    "scan_key",
+    "owner_key",
+    "correlation_key",
+    "email",
+    "customer_email",
+    "owner_email",
+    "requester_email",
+    "uploaded_by",
+    "subject_selector",
+    "matched_value",
+    "phone",
+    "owner_phone",
+    "requester_phone",
+    "display_name",
+    "full_name",
+    "requester_name",
+    "name",
+    "email_hash",
+    "query",
+)
+
+
+def _clean_value(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1]
+    if text.lower() in ("null", "none", "n/a"):
+        return ""
+    return text
+
+
+def _observation_time(item: dict[str, Any], default: datetime) -> datetime:
+    for key in ("observed_at", "captured_at"):
+        value = _clean_value(item.get(key))
+        if value:
+            return _parse_iso(value)
+    return default
+
+
+def _collect_ids(*sources: Any) -> set[str]:
+    """Collect non-empty identifier values from dicts and nested ``document`` blobs."""
+    ids: set[str] = set()
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for key in _ID_FIELDS:
+            val = _clean_value(src.get(key))
+            if val:
+                ids.add(val)
+        doc = src.get("document")
+        if isinstance(doc, dict):
+            ids.update(_collect_ids(doc))
+    return ids
+
+
+def _has_direct_ids(item: dict[str, Any]) -> bool:
+    return any(
+        _clean_value(item.get(k))
+        for k in ("customer_reference", "user_id", "subject_reference", "email",
+                  "customer_email", "owner_email", "requester_email", "phone",
+                  "owner_phone", "requester_phone", "email_hash")
+    )
+
+
+# Direct identifiers that a REDACT rule must strip. A stable user reference is
+# explicitly allowed to remain, so it does not count here.
+_DIRECT_PII_FIELDS = (
+    "name", "full_name", "display_name",
+    "email", "customer_email", "owner_email", "requester_email",
+    "phone", "owner_phone", "requester_phone",
+    "email_hash",
+)
+
+
+def _has_direct_pii(item: dict[str, Any]) -> bool:
+    return any(_clean_value(item.get(k)) for k in _DIRECT_PII_FIELDS)
+
+
+def _category_from_hint(hint: str, resource_id: str = "") -> str | None:
+    """Map a record_type/collection/table name onto a canonical data category."""
+    h = hint.strip().lower()
+    r = resource_id.strip().lower()
+    if h.upper() in _ALL_CATEGORIES:
+        return h.upper()
+    if "tombstone" in h or "deleted_customer" in h or r.startswith("tombstone_"):
+        return "ACCOUNT_TOMBSTONE"
+    if "attachment" in h or r.startswith("attachment_"):
+        return "SUPPORT_ATTACHMENT"
+    if "legal" in h or r.startswith("legal_"):
+        return "LEGAL_HOLD_RECORD"
+    if "audit" in h or "security" in h or r.startswith("audit_record_"):
+        return "SECURITY_AUDIT_LOG"
+    if "support" in h or r.startswith("support_"):
+        return "SUPPORT_MESSAGE"
+    if "analytics" in h or r.startswith("analytics_"):
+        return "ANALYTICS_PROFILE"
+    if "consent" in h or "marketing" in h:
+        return "MARKETING_PROFILE"
+    if "search" in h or r.startswith("search_"):
+        return "SEARCH_INDEX_ENTRY"
+    if "cache" in h or r.startswith("cache_"):
+        return "CACHE_ENTRY"
+    if "telemetry" in h or r.startswith("telemetry_"):
+        return "PRODUCT_TELEMETRY"
+    if "delivery" in h or "email_log" in h or r.startswith("email_delivery_"):
+        return "EMAIL_DELIVERY_LOG"
+    if "backup" in h or r.startswith("backup_"):
+        return "BACKUP_ARCHIVE"
+    if "connector" in h or "data_flow" in h or r.startswith("data_flow_"):
+        return "DATA_FLOW"
+    if "export" in h or r.startswith("export_"):
+        return "USER_EXPORT"
+    if "secondary" in h or "identifier" in h:
+        return "SECONDARY_IDENTIFIER"
+    if "profile" in h or "account" in h or r.startswith("account_"):
+        return "USER_PROFILE"
+    return None
+
+
+def _category_for(
+    system_id: str,
+    resource_id: str,
+    *hints: str,
+) -> str:
+    for hint in hints:
+        if hint:
+            cat = _category_from_hint(str(hint), resource_id)
+            if cat:
+                return cat
+    cat = _category_from_hint(system_id, resource_id)
+    return cat or "USER_PROFILE"
+
+
+def _state_for_record(
+    category: str,
+    item: dict[str, Any],
+    raw_result: str = "",
+) -> str:
+    """Derive the observed state for a record from its fields."""
+    result = _clean_value(raw_result).upper()
+    state = _RESULT_STATES.get(result, "")
+
+    if category == "USER_PROFILE":
+        status = _clean_value(item.get("account_status")).upper()
+        if status in ("DELETED", "PURGED", "ERASED"):
+            return "ABSENT"
+        return state or "PRESENT"
+
+    if category == "SUPPORT_MESSAGE":
+        # Subject-owned stable references (user_id) are allowed to remain;
+        # only direct identifiers trigger a redaction requirement.
+        if state == "REDACTED":
+            return "REDACTED"
+        if _has_direct_pii(item):
+            return "PRESENT"
+        try:
+            if _text_ids(item):
+                return "PRESENT"
+        except NameError:  # pragma: no cover - helpers are defined below
+            pass
+        return "REDACTED"
+
+    if category == "SUPPORT_ATTACHMENT":
+        return state or "PRESENT"
+
+    if category in ("ANALYTICS_PROFILE", "PRODUCT_TELEMETRY"):
+        if state == "ANONYMIZED":
+            return "ANONYMIZED"
+        attributable = any(
+            _clean_value(item.get(k))
+            for k in ("user_id", "customer_reference", "email", "phone", "email_hash")
+        )
+        return "PRESENT" if attributable else "ANONYMIZED"
+
+    if category == "ACCOUNT_TOMBSTONE":
+        direct = any(
+            _clean_value(item.get(k))
+            for k in ("name", "full_name", "email", "phone", "email_hash")
+        )
+        return "PRESENT" if direct else "REDACTED"
+
+    if category == "BACKUP_ARCHIVE":
+        if "restore_allowed" in item:
+            return "ACTIVE" if _as_bool(item.get("restore_allowed")) else "BLOCKED"
+        return state or "ACTIVE"
+
+    if category == "DATA_FLOW":
+        if "enabled" in item:
+            return "ACTIVE" if _as_bool(item.get("enabled")) else "DISABLED"
+        return state or "ACTIVE"
+
+    if category == "USER_EXPORT":
+        if "download_available" in item:
+            return "PRESENT" if _as_bool(item.get("download_available")) else "ABSENT"
+        if "available" in item:
+            return "PRESENT" if _as_bool(item.get("available")) else "ABSENT"
+        return state or "PRESENT"
+
+    if category == "EMAIL_DELIVERY_LOG":
+        if state == "REDACTED":
+            return "REDACTED"
+        has_email = any(
+            _clean_value(item.get(k))
+            for k in ("email", "customer_email", "owner_email", "requester_email")
+        )
+        return "PRESENT" if has_email else "REDACTED"
+
+    if category in ("SECURITY_AUDIT_LOG", "LEGAL_HOLD_RECORD"):
+        return "PRESENT"
+
+    return state or "PRESENT"
+
+
+def _pii_for(category: str, item: dict[str, Any], state: str) -> bool:
+    if category in ("USER_PROFILE", "SEARCH_INDEX_ENTRY", "USER_EXPORT",
+                    "MARKETING_PROFILE", "SUPPORT_ATTACHMENT", "SECONDARY_IDENTIFIER",
+                    "CACHE_ENTRY"):
+        if state == "PRESENT":
+            return any(_clean_value(item.get(k)) for k in (
+                "email", "customer_email", "owner_email", "requester_email",
+                "phone", "owner_phone", "requester_phone",
+            ))
+        return False
+    if category == "SUPPORT_MESSAGE":
+        return state == "PRESENT" and (_has_direct_pii(item) or bool(_text_ids(item)))
+    if category == "ANALYTICS_PROFILE":
+        return state == "PRESENT" and _has_direct_ids(item)
+    if category == "ACCOUNT_TOMBSTONE":
+        return state == "PRESENT"
+    if category == "PRODUCT_TELEMETRY":
+        return state == "PRESENT"
+    if category == "EMAIL_DELIVERY_LOG":
+        return state == "PRESENT"
+    return False
+
+
+def _make_record(
+    *,
+    evidence_id: str,
+    file_path: Path,
+    captured_at: datetime,
+    origin: str,
+    system_id: str,
+    resource_id: str,
+    category: str,
+    state: str,
+    identifiers: set[str],
+    details: dict[str, Any],
+    provenance: str,
+) -> ObservedRecord:
+    return ObservedRecord(
+        evidence_id=evidence_id,
+        file_path=file_path,
+        captured_at=captured_at,
+        origin=origin,
+        system_id=system_id,
+        resource_id=resource_id,
+        data_category=category,
+        state=state,
+        has_exposed_pii=_pii_for(category, details, state),
+        identifiers=identifiers,
+        details=details,
+        provenance=provenance,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Parsers for each evidence format
 # ---------------------------------------------------------------------------
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ("true", "1", "yes", "y")
+
+
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_PHONE_RE = re.compile(r"\+\d[\d\s\-()]{7,}\d")
+
+_SQL_TABLE_SYSTEMS = (
+    ("customer_profiles", "account_service"),
+    ("search_documents", "search_service"),
+    ("customer_search_documents", "search_service"),
+    ("analytics", "analytics_platform"),
+    ("support", "support_platform"),
+    ("customer_exports", "export_service"),
+    ("connector", "integration_service"),
+    ("backup", "backup_service"),
+    ("security", "security_service"),
+    ("deleted_customer_references", "identity_service"),
+    ("retained_order_records", "legal_service"),
+)
+
+
+def _sql_system_for_table(table: str, origin_system: str = "") -> str:
+    norm = _normalize_system_id(origin_system) if origin_system else ""
+    if norm and norm not in ("", "central_observability_export"):
+        return norm
+    t = table.lower()
+    for needle, system in _SQL_TABLE_SYSTEMS:
+        if needle in t:
+            return system
+    return "account_service"
+
+
+def _text_ids(item: dict[str, Any]) -> set[str]:
+    """Identifiers embedded in free-text fields (support messages, notes)."""
+    ids: set[str] = set()
+    for key in ("message_text", "message", "message_excerpt", "note", "body", "content"):
+        text = _clean_value(item.get(key))
+        if not text:
+            continue
+        ids.update(_EMAIL_RE.findall(text))
+        ids.update(_PHONE_RE.findall(text))
+    return ids
+
+
+def _merge_document(item: dict[str, Any]) -> dict[str, Any]:
+    """Search documents keep their subject fields in a nested document blob."""
+    doc = item.get("document")
+    if not isinstance(doc, dict):
+        return item
+    merged = dict(item)
+    for key, value in doc.items():
+        merged.setdefault(key, value)
+    return merged
+
 
 def _parse_sql_evidence(
     file_id: str,
@@ -99,273 +505,117 @@ def _parse_sql_evidence(
         tables = [r[0] for r in cursor.fetchall()]
 
         for tbl in tables:
+            if tbl.lower() == "snapshot_scope":
+                continue
             cursor.execute(f"PRAGMA table_info({tbl})")
             cols = [r[1] for r in cursor.fetchall()]
-            col_idx = {col: i for i, col in enumerate(cols)}
             cursor.execute(f"SELECT * FROM {tbl}")
-            rows = cursor.fetchall()
+            for row in cursor.fetchall():
+                row_dict = dict(zip(cols, row))
+                res_id = _clean_value(row_dict.get("resource_id"))
+                if not res_id:
+                    continue
 
-            for row in rows:
-                row_dict = {col: row[col_idx[col]] for col in cols}
-
-                # 1. Failover replica tables
-                if "customer_profiles" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("user_id") or row_dict.get("customer_reference") or ""
-                    email = row_dict.get("email") or ""
-                    phone = row_dict.get("phone") or ""
-                    name = row_dict.get("full_name") or ""
-                    status = row_dict.get("account_status", "ACTIVE")
-                    state = "PRESENT" if status == "ACTIVE" else "ABSENT"
-                    ids = {x for x in [uid, email, phone, name] if x}
+                if "record_json" in row_dict and row_dict.get("record_json"):
+                    try:
+                        item = json.loads(row_dict["record_json"])
+                    except Exception:
+                        continue
+                    if not isinstance(item, dict):
+                        continue
+                    item.setdefault("resource_id", res_id)
+                    origin_system = row_dict.get("origin_system", "")
+                    system_id = _sql_system_for_table(tbl, origin_system)
+                    collection = row_dict.get("collection_name", "")
+                    merged = _merge_document(item)
+                    category = _category_for(
+                        system_id,
+                        _clean_value(merged.get("resource_id")),
+                        collection,
+                    )
+                    if category == "USER_PROFILE" and system_id == "integration_service":
+                        category = "DATA_FLOW"
+                    state = _state_for_record(category, merged, merged.get("result", ""))
+                    ids = _collect_ids(merged) | _text_ids(merged)
                     records.append(
-                        ObservedRecord(
+                        _make_record(
                             evidence_id=file_id,
                             file_path=file_path,
                             captured_at=captured_at,
                             origin=origin,
-                            system_id="account_service",
-                            resource_id=res_id,
-                            data_category="USER_PROFILE",
+                            system_id=system_id,
+                            resource_id=_clean_value(merged.get("resource_id")),
+                            category=category,
                             state=state,
-                            has_exposed_pii=bool(email or phone),
                             identifiers=ids,
-                            details=row_dict,
+                            details=merged,
                             provenance=f"{tbl}:{res_id}",
                         )
                     )
+                    continue
 
-                # 2. Search documents
-                elif "search" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("customer_reference") or ""
-                    email = row_dict.get("email") or ""
-                    phone = row_dict.get("phone") or ""
-                    name = row_dict.get("display_name") or ""
-                    ids = {x for x in [uid, email, phone, name] if x}
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="search_service",
-                            resource_id=res_id,
-                            data_category="SEARCH_INDEX_ENTRY",
-                            state="PRESENT",
-                            has_exposed_pii=bool(email or phone),
-                            identifiers=ids,
-                            details=row_dict,
-                            provenance=f"{tbl}:{res_id}",
-                        )
+                system_id = _sql_system_for_table(tbl)
+                category = _category_for(system_id, res_id, tbl)
+                if category == "USER_PROFILE" and system_id == "integration_service":
+                    category = "DATA_FLOW"
+                state = _state_for_record(category, row_dict)
+                ids = _collect_ids(row_dict) | _text_ids(row_dict)
+                records.append(
+                    _make_record(
+                        evidence_id=file_id,
+                        file_path=file_path,
+                        captured_at=captured_at,
+                        origin=origin,
+                        system_id=system_id,
+                        resource_id=res_id,
+                        category=category,
+                        state=state,
+                        identifiers=ids,
+                        details=row_dict,
+                        provenance=f"{tbl}:{res_id}",
                     )
-
-                # 3. Analytics profiles
-                elif "analytics" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("customer_reference") or ""
-                    email = row_dict.get("email") or ""
-                    phone = row_dict.get("phone") or ""
-                    ehash = row_dict.get("email_hash") or ""
-                    ids = {x for x in [uid, email, phone, ehash] if x}
-                    # If direct PII remains, state is PRESENT (exposed PII)
-                    is_anonymized = not (email or phone or uid)
-                    state = "ANONYMIZED" if is_anonymized else "PRESENT"
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="analytics_platform",
-                            resource_id=res_id,
-                            data_category="ANALYTICS_PROFILE",
-                            state=state,
-                            has_exposed_pii=not is_anonymized,
-                            identifiers=ids,
-                            details=row_dict,
-                            provenance=f"{tbl}:{res_id}",
-                        )
-                    )
-
-                # 4. Support records
-                elif "support" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("customer_reference") or ""
-                    email = row_dict.get("requester_email") or ""
-                    phone = row_dict.get("requester_phone") or ""
-                    name = row_dict.get("requester_name") or ""
-                    ids = {x for x in [uid, email, phone, name] if x}
-                    # Default support record is SUPPORT_MESSAGE unless specified as attachment
-                    cat = "SUPPORT_ATTACHMENT" if "attachment" in str(row_dict).lower() else "SUPPORT_MESSAGE"
-                    is_redacted = not (email or phone or name)
-                    state = "REDACTED" if is_redacted else "PRESENT"
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="support_platform",
-                            resource_id=res_id,
-                            data_category=cat,
-                            state=state,
-                            has_exposed_pii=not is_redacted,
-                            identifiers=ids,
-                            details=row_dict,
-                            provenance=f"{tbl}:{res_id}",
-                        )
-                    )
-
-                # 5. Customer exports
-                elif "export" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("customer_reference") or ""
-                    email = row_dict.get("owner_email") or ""
-                    phone = row_dict.get("owner_phone") or ""
-                    ids = {x for x in [uid, email, phone] if x}
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="export_service",
-                            resource_id=res_id,
-                            data_category="USER_EXPORT",
-                            state="PRESENT",
-                            has_exposed_pii=bool(email or phone),
-                            identifiers=ids,
-                            details=row_dict,
-                            provenance=f"{tbl}:{res_id}",
-                        )
-                    )
-
-                # 6. Connector subscriptions
-                elif "connector" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("customer_reference") or ""
-                    email = row_dict.get("customer_email") or ""
-                    enabled = bool(row_dict.get("enabled", True))
-                    state = "ACTIVE" if enabled else "DISABLED"
-                    ids = {x for x in [uid, email] if x}
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="integration_service",
-                            resource_id=res_id,
-                            data_category="DATA_FLOW",
-                            state=state,
-                            has_exposed_pii=False,
-                            identifiers=ids,
-                            details=row_dict,
-                            provenance=f"{tbl}:{res_id}",
-                        )
-                    )
-
-                # 7. Backup restore entries
-                elif "backup" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("customer_reference") or ""
-                    email = row_dict.get("customer_email") or ""
-                    allowed = bool(row_dict.get("restore_allowed", True))
-                    state = "ACTIVE" if allowed else "BLOCKED"
-                    ids = {x for x in [uid, email] if x}
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="backup_service",
-                            resource_id=res_id,
-                            data_category="BACKUP_ARCHIVE",
-                            state=state,
-                            has_exposed_pii=False,
-                            identifiers=ids,
-                            details=row_dict,
-                            provenance=f"{tbl}:{res_id}",
-                        )
-                    )
-
-                # 8. Security audit records
-                elif "security" in tbl or "audit" in tbl:
-                    res_id = row_dict.get("resource_id") or ""
-                    uid = row_dict.get("subject_reference") or ""
-                    ids = {uid} if uid else set()
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="security_service",
-                            resource_id=res_id,
-                            data_category="SECURITY_AUDIT_LOG",
-                            state="PRESENT",
-                            has_exposed_pii=False,
-                            identifiers=ids,
-                            details=row_dict,
-                            provenance=f"{tbl}:{res_id}",
-                        )
-                    )
-
-                # 9. JSON blob tables (customer_data_read_replica, regional, reporting)
-                elif "record_json" in row_dict:
-                    raw_json = row_dict.get("record_json")
-                    res_id = row_dict.get("resource_id") or ""
-                    sys_name = _normalize_system_id(row_dict.get("origin_system", "account_service"))
-                    coll = row_dict.get("collection_name", "")
-                    if raw_json:
-                        try:
-                            parsed = json.loads(raw_json)
-                            uid = parsed.get("customer_reference") or parsed.get("user_id") or ""
-                            email = parsed.get("email") or parsed.get("requester_email") or parsed.get("customer_email") or parsed.get("owner_email") or ""
-                            phone = parsed.get("phone") or parsed.get("requester_phone") or ""
-                            name = parsed.get("full_name") or parsed.get("display_name") or parsed.get("requester_name") or ""
-                            ids = {x for x in [uid, email, phone, name] if x}
-                            state = "PRESENT"
-                            cat = "USER_PROFILE"
-                            if "search" in coll or "search" in sys_name:
-                                cat = "SEARCH_INDEX_ENTRY"
-                            elif "support" in coll or "support" in sys_name:
-                                cat = "SUPPORT_MESSAGE"
-                                state = "REDACTED" if not (email or phone or name) else "PRESENT"
-                            elif "analytics" in coll or "analytics" in sys_name:
-                                cat = "ANALYTICS_PROFILE"
-                                state = "ANONYMIZED" if not (email or phone or uid) else "PRESENT"
-                            elif "backup" in coll or "backup" in sys_name:
-                                cat = "BACKUP_ARCHIVE"
-                                state = "ACTIVE" if parsed.get("restore_allowed", True) else "BLOCKED"
-                            elif "connector" in coll or "integration" in sys_name:
-                                cat = "DATA_FLOW"
-                                state = "ACTIVE" if parsed.get("enabled", True) else "DISABLED"
-
-                            records.append(
-                                ObservedRecord(
-                                    evidence_id=file_id,
-                                    file_path=file_path,
-                                    captured_at=captured_at,
-                                    origin=origin,
-                                    system_id=sys_name,
-                                    resource_id=res_id,
-                                    data_category=cat,
-                                    state=state,
-                                    has_exposed_pii=bool(email or phone),
-                                    identifiers=ids,
-                                    details=parsed,
-                                    provenance=f"{tbl}:{res_id}",
-                                )
-                            )
-                        except Exception:
-                            pass
+                )
     finally:
         conn.close()
 
     return records
+
+
+def _json_item_record(
+    *,
+    file_id: str,
+    file_path: Path,
+    origin: str,
+    captured_at: datetime,
+    system_id: str,
+    item: dict[str, Any],
+    resource_id: str,
+    category_hint: str = "",
+    provenance: str,
+) -> Optional[ObservedRecord]:
+    merged = _merge_document(item)
+    res_id = _clean_value(merged.get("resource_id")) or resource_id
+    if not res_id:
+        return None
+    system_id = _normalize_system_id(system_id)
+    category = _category_for(system_id, res_id, category_hint)
+    if category == "USER_PROFILE" and system_id == "integration_service":
+        category = "DATA_FLOW"
+    state = _state_for_record(category, merged, merged.get("result", ""))
+    ids = _collect_ids(merged) | _text_ids(merged)
+    return _make_record(
+        evidence_id=file_id,
+        file_path=file_path,
+        captured_at=_observation_time(merged, captured_at),
+        origin=origin,
+        system_id=system_id,
+        resource_id=res_id,
+        category=category,
+        state=state,
+        identifiers=ids,
+        details=merged,
+        provenance=provenance,
+    )
 
 
 def _parse_json_evidence(
@@ -377,349 +627,155 @@ def _parse_json_evidence(
     records: list[ObservedRecord] = []
     with open(file_path, "r", encoding="utf-8") as jf:
         data = json.load(jf)
+    captured_at = _observation_time(data, captured_at)
 
-    # 1. service_resource_export_*.json
-    if "service_exports" in data:
-        exports = data["service_exports"]
-        for sname, scontent in exports.items():
-            norm_sys = _normalize_system_id(sname)
-            if not isinstance(scontent, dict):
+    # 1. Per-service resource exports (evidence_62/65/.../92).
+    for sname, scontent in (data.get("service_exports") or {}).items():
+        if not isinstance(scontent, dict):
+            continue
+        norm_sys = _normalize_system_id(sname)
+        for collection, items in scontent.items():
+            if not isinstance(items, list):
                 continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                res_id = _clean_value(item.get("resource_id"))
 
-            # account_service -> profile_lookups
-            if "profile_lookups" in scontent:
-                for item in scontent["profile_lookups"]:
-                    res_id = item.get("resource_id") or ""
-                    status_code = item.get("status_code", 200)
-                    profile = item.get("profile") or {}
-                    uid = profile.get("customer_reference") or profile.get("user_id") or ""
-                    email = profile.get("email") or ""
-                    phone = profile.get("phone") or ""
-                    ids = {x for x in [uid, email, phone] if x}
-                    state = "ABSENT" if status_code == 404 else "PRESENT"
+                if collection == "profile_lookups":
+                    profile = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+                    merged = dict(item)
+                    merged.update(profile)
+                    merged["resource_id"] = res_id
+                    state = "ABSENT" if item.get("status_code") == 404 or not profile else "PRESENT"
+                    ids = _collect_ids(merged)
                     records.append(
-                        ObservedRecord(
+                        _make_record(
                             evidence_id=file_id,
                             file_path=file_path,
-                            captured_at=captured_at,
+                            captured_at=_observation_time(merged, captured_at),
                             origin=origin,
                             system_id=norm_sys,
                             resource_id=res_id,
-                            data_category="USER_PROFILE",
+                            category="USER_PROFILE",
                             state=state,
-                            has_exposed_pii=bool(email or phone),
                             identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.profile_lookups:{res_id}",
+                            details=merged,
+                            provenance=f"service_exports.{collection}:{res_id}",
                         )
                     )
+                    continue
 
-            # analytics_platform -> profiles
-            if "profiles" in scontent:
-                for item in scontent["profiles"]:
-                    res_id = item.get("resource_id") or ""
-                    uid = item.get("customer_reference") or ""
-                    email = item.get("email") or ""
-                    phone = item.get("phone") or ""
-                    ehash = item.get("email_hash") or ""
-                    ids = {x for x in [uid, email, phone, ehash] if x}
-                    is_anonymized = not (email or phone or uid or ehash)
-                    state = "ANONYMIZED" if is_anonymized else "PRESENT"
+                if collection == "index_queries":
+                    hits = item.get("hits") if isinstance(item.get("hits"), dict) else {}
+                    docs = hits.get("documents") or []
+                    total = hits.get("total", len(docs))
+                    merged = dict(item)
+                    if docs:
+                        merged = _merge_document(docs[0])
+                        merged.update({k: v for k, v in item.items() if k not in merged})
+                        merged["resource_id"] = _clean_value(
+                            merged.get("resource_id")
+                        ) or res_id
+                    else:
+                        merged["resource_id"] = res_id
+                    ids = _collect_ids(item) | _collect_ids(merged)
+                    for doc in docs:
+                        ids |= _collect_ids(doc)
+                    state = "PRESENT" if _as_bool(total) or docs else "ABSENT"
+                    if str(total).strip() == "0":
+                        state = "ABSENT"
                     records.append(
-                        ObservedRecord(
+                        _make_record(
                             evidence_id=file_id,
                             file_path=file_path,
-                            captured_at=captured_at,
+                            captured_at=_observation_time(merged, captured_at),
                             origin=origin,
                             system_id=norm_sys,
-                            resource_id=res_id,
-                            data_category="ANALYTICS_PROFILE",
+                            resource_id=_clean_value(merged.get("resource_id")) or res_id,
+                            category="SEARCH_INDEX_ENTRY",
                             state=state,
-                            has_exposed_pii=not is_anonymized,
                             identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.profiles:{res_id}",
+                            details=merged,
+                            provenance=f"service_exports.{collection}:{res_id}",
                         )
                     )
+                    continue
 
-            # backup_service -> restore_entries
-            if "restore_entries" in scontent:
-                for item in scontent["restore_entries"]:
-                    res_id = item.get("resource_id") or ""
-                    uid = item.get("customer_reference") or ""
-                    email = item.get("customer_email") or ""
-                    allowed = bool(item.get("restore_allowed", True))
-                    state = "ACTIVE" if allowed else "BLOCKED"
-                    ids = {x for x in [uid, email] if x}
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id=norm_sys,
-                            resource_id=res_id,
-                            data_category="BACKUP_ARCHIVE",
-                            state=state,
-                            has_exposed_pii=False,
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.restore_entries:{res_id}",
-                        )
-                    )
-
-            # export_service -> exports
-            if "exports" in scontent:
-                for item in scontent["exports"]:
-                    res_id = item.get("resource_id") or ""
-                    uid = item.get("customer_reference") or ""
-                    email = item.get("owner_email") or ""
-                    phone = item.get("owner_phone") or ""
-                    ids = {x for x in [uid, email, phone] if x}
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id=norm_sys,
-                            resource_id=res_id,
-                            data_category="USER_EXPORT",
-                            state="PRESENT",
-                            has_exposed_pii=bool(email or phone),
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.exports:{res_id}",
-                        )
-                    )
-
-            # integration_service -> connectors
-            if "connectors" in scontent:
-                for item in scontent["connectors"]:
-                    res_id = item.get("resource_id") or ""
-                    uid = item.get("customer_reference") or ""
-                    email = item.get("customer_email") or ""
-                    enabled = bool(item.get("enabled", True))
-                    state = "ACTIVE" if enabled else "DISABLED"
-                    ids = {x for x in [uid, email] if x}
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id=norm_sys,
-                            resource_id=res_id,
-                            data_category="DATA_FLOW",
-                            state=state,
-                            has_exposed_pii=False,
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.connectors:{res_id}",
-                        )
-                    )
-
-            # search_service -> index_queries
-            if "index_queries" in scontent:
-                for item in scontent["index_queries"]:
-                    res_id = item.get("resource_id") or ""
-                    hits = item.get("hits") or {}
-                    docs = hits.get("documents", [])
-                    ids: set[str] = set()
-                    query = item.get("query")
-                    if query:
-                        ids.add(query)
-                    for d in docs:
-                        d_id = d.get("resource_id")
-                        if d_id:
-                            res_id = d_id
-                        for k in ["customer_reference", "email", "phone", "display_name"]:
-                            v = d.get(k)
-                            if v:
-                                ids.add(v)
-                    state = "PRESENT" if hits.get("total", 0) > 0 else "ABSENT"
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id=norm_sys,
-                            resource_id=res_id,
-                            data_category="SEARCH_INDEX_ENTRY",
-                            state=state,
-                            has_exposed_pii=True,
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.index_queries:{res_id}",
-                        )
-                    )
-
-            # security_service -> audit_records
-            if "audit_records" in scontent:
-                for item in scontent["audit_records"]:
-                    res_id = item.get("resource_id") or ""
-                    uid = item.get("subject_reference") or ""
-                    ids = {uid} if uid else set()
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id=norm_sys,
-                            resource_id=res_id,
-                            data_category="SECURITY_AUDIT_LOG",
-                            state="PRESENT",
-                            has_exposed_pii=False,
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.audit_records:{res_id}",
-                        )
-                    )
-
-            # support_platform -> tickets
-            if "tickets" in scontent:
-                for item in scontent["tickets"]:
-                    res_id = item.get("resource_id") or ""
-                    uid = item.get("customer_reference") or ""
-                    email = item.get("requester_email") or ""
-                    phone = item.get("requester_phone") or ""
-                    name = item.get("requester_name") or ""
-                    ids = {x for x in [uid, email, phone, name] if x}
-                    is_redacted = not (email or phone or name)
-                    state = "REDACTED" if is_redacted else "PRESENT"
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id=norm_sys,
-                            resource_id=res_id,
-                            data_category="SUPPORT_MESSAGE",
-                            state=state,
-                            has_exposed_pii=not is_redacted,
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"service_exports.tickets:{res_id}",
-                        )
-                    )
-
-    # 2. customer_data_snapshot_bundle_*.json
-    elif "snapshots" in data:
-        for snap in data["snapshots"]:
-            dstore = _normalize_system_id(snap.get("data_store", ""))
-            coll = snap.get("collection", "")
-            for item in snap.get("records", []):
-                res_id = item.get("resource_id") or ""
-                uid = item.get("subject_reference") or item.get("customer_reference") or item.get("user_id") or ""
-                email = item.get("email") or item.get("customer_email") or item.get("owner_email") or item.get("requester_email") or ""
-                phone = item.get("phone") or item.get("requester_phone") or ""
-                name = item.get("name") or item.get("full_name") or item.get("display_name") or item.get("requester_name") or ""
-                ehash = item.get("email_hash") or ""
-                ids = {x for x in [uid, email, phone, name, ehash] if x}
-
-                if "tombstone" in coll or "deleted_customer" in coll:
-                    # Account tombstone
-                    is_clean = not (email or phone or name or ehash)
-                    state = "REDACTED" if is_clean else "PRESENT"
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="identity_service",
-                            resource_id=res_id,
-                            data_category="ACCOUNT_TOMBSTONE",
-                            state=state,
-                            has_exposed_pii=not is_clean,
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"snapshot.{coll}:{res_id}",
-                        )
-                    )
-                elif "security" in coll or "audit" in coll:
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="security_service",
-                            resource_id=res_id,
-                            data_category="SECURITY_AUDIT_LOG",
-                            state="PRESENT",
-                            has_exposed_pii=False,
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"snapshot.{coll}:{res_id}",
-                        )
-                    )
-                elif "profile" in coll:
-                    state = "ABSENT" if item.get("account_status") == "DELETED" else "PRESENT"
-                    records.append(
-                        ObservedRecord(
-                            evidence_id=file_id,
-                            file_path=file_path,
-                            captured_at=captured_at,
-                            origin=origin,
-                            system_id="account_service",
-                            resource_id=res_id,
-                            data_category="USER_PROFILE",
-                            state=state,
-                            has_exposed_pii=bool(email or phone),
-                            identifiers=ids,
-                            details=item,
-                            provenance=f"snapshot.{coll}:{res_id}",
-                        )
-                    )
-
-    # 3. Direct record lists (connector_configurations, analytics report, export jobs)
-    elif "records" in data:
-        coll = data.get("collection", "")
-        source = _normalize_system_id(data.get("source") or data.get("origin") or "")
-        for item in data["records"]:
-            res_id = item.get("resource_id") or ""
-            uid = item.get("user_id") or item.get("customer_reference") or item.get("subject_reference") or ""
-            email = item.get("email") or item.get("owner_email") or item.get("customer_email") or item.get("requester_email") or ""
-            phone = item.get("phone") or item.get("owner_phone") or ""
-            name = item.get("requester_name") or item.get("display_name") or ""
-            ehash = item.get("email_hash") or ""
-            ids = {x for x in [uid, email, phone, name, ehash] if x}
-
-            cat = "USER_PROFILE"
-            state = "PRESENT"
-            if "connector" in source or "integration" in source:
-                cat = "DATA_FLOW"
-                state = "ACTIVE" if item.get("enabled", True) else "DISABLED"
-            elif "analytics" in source:
-                cat = "ANALYTICS_PROFILE"
-                state = "ANONYMIZED" if not (email or phone or uid or ehash) else "PRESENT"
-            elif "export" in source:
-                cat = "USER_EXPORT"
-                state = "PRESENT"
-            elif "security" in source or "audit" in source:
-                cat = "SECURITY_AUDIT_LOG"
-                state = "PRESENT"
-
-            records.append(
-                ObservedRecord(
-                    evidence_id=file_id,
+                rec = _json_item_record(
+                    file_id=file_id,
                     file_path=file_path,
-                    captured_at=captured_at,
                     origin=origin,
-                    system_id=source or "account_service",
+                    captured_at=captured_at,
+                    system_id=norm_sys,
+                    item=item,
                     resource_id=res_id,
-                    data_category=cat,
-                    state=state,
-                    has_exposed_pii=bool(email or phone),
-                    identifiers=ids,
-                    details=item,
-                    provenance=f"records:{res_id}",
+                    category_hint="",
+                    provenance=f"service_exports.{collection}:{res_id}",
                 )
+                if rec:
+                    records.append(rec)
+
+    # 2. Snapshot bundles and direct record lists.
+    snapshots = data.get("snapshots")
+    if isinstance(snapshots, list):
+        for snap in snapshots:
+            if not isinstance(snap, dict):
+                continue
+            system_id = _normalize_system_id(snap.get("data_store", ""))
+            collection = snap.get("collection", "")
+            snapshot_time = _observation_time(snap, captured_at)
+            for item in snap.get("records", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                hint = collection
+                if collection == "operational_record_history":
+                    system_id = _normalize_system_id(
+                        _clean_value(item.get("system")) or system_id
+                    )
+                    hint = _clean_value(item.get("record_type")) or collection
+                rec = _json_item_record(
+                    file_id=file_id,
+                    file_path=file_path,
+                    origin=origin,
+                    captured_at=snapshot_time,
+                    system_id=system_id,
+                    item=item,
+                    resource_id=_clean_value(item.get("resource_id")),
+                    category_hint=hint,
+                    provenance=f"snapshot.{collection}:{item.get('resource_id')}",
+                )
+                if rec:
+                    records.append(rec)
+        return records
+
+    raw_records = data.get("records")
+    if isinstance(raw_records, list):
+        source = data.get("source") or data.get("origin") or ""
+        collection = data.get("collection") or ""
+        for item in raw_records:
+            if not isinstance(item, dict):
+                continue
+            item_system = item.get("system")
+            if item_system:
+                system_id = _normalize_system_id(str(item_system))
+                hint = _clean_value(item.get("record_type")) or collection
+            else:
+                system_id = _normalize_system_id(str(source))
+                hint = collection
+            rec = _json_item_record(
+                file_id=file_id,
+                file_path=file_path,
+                origin=origin,
+                captured_at=captured_at,
+                system_id=system_id,
+                item=item,
+                resource_id=_clean_value(item.get("resource_id")),
+                category_hint=hint,
+                provenance=f"records:{item.get('resource_id')}",
             )
+            if rec:
+                records.append(rec)
 
     return records
 
@@ -773,7 +829,7 @@ def _parse_text_handover_evidence(
                 ObservedRecord(
                     evidence_id=file_id,
                     file_path=file_path,
-                    captured_at=captured_at,
+                    captured_at=_parse_iso(ts_str),
                     origin=origin,
                     system_id=sys_id,
                     resource_id=res_id,
@@ -789,141 +845,256 @@ def _parse_text_handover_evidence(
     return records
 
 
+def _log_header_fields(line: str) -> dict[str, str]:
+    """Extract service/trace/event from the three non key=value log layouts."""
+    fields: dict[str, str] = {}
+
+    # [DEBUG] [account_service] [tr-123] profile_lookup_completed: ...
+    m = re.match(
+        r"^\S+\s+\[[A-Z]+\]\s+\[([A-Za-z0-9_]+)\]\s+\[([A-Za-z0-9_\-]+)\]\s+([A-Za-z0-9_]+):",
+        line,
+    )
+    if m:
+        fields["service"] = m.group(1)
+        if m.group(2).startswith("tr-"):
+            fields["trace_id"] = m.group(2)
+        fields["event"] = m.group(3)
+        return fields
+
+    # 2026-07-03T07:51:30Z | DEBUG | service | trace | event | ...
+    parts = [p.strip() for p in line.split("|")]
+    if len(parts) >= 5 and re.match(r"^\d{4}-\d\d-\d\dT", parts[0]):
+        fields["service"] = parts[2]
+        if parts[3].startswith("tr-"):
+            fields["trace_id"] = parts[3]
+        fields["event"] = parts[4]
+        return fields
+
+    # <15>1 node-1 account_service tr-123 - - level=... (optionally timestamped)
+    m = re.search(r"<\d+>1\s+\S+\s+(\S+)\s+(\S+)\s", line)
+    if m:
+        fields["service"] = m.group(1)
+        if m.group(2).startswith("tr-"):
+            fields["trace_id"] = m.group(2)
+
+    # 2026-06-08T09:53:38Z requestId=tr-1179991 level=DEBUG function=account_service ...
+    if "trace_id" not in fields:
+        m = re.search(r"\brequestId=(tr-[A-Za-z0-9_\-]+)", line)
+        if m:
+            fields["trace_id"] = m.group(1)
+    return fields
+
+
 def _parse_log_evidence(
     file_id: str,
     file_path: Path,
     origin: str,
     captured_at: datetime,
 ) -> list[ObservedRecord]:
-    records: list[ObservedRecord] = []
-    # Pattern for key=value logs like resource_lookup_trace
+    """Parse structured logs, propagating identifiers across trace contexts.
+
+    Logs frequently put the identity on a ``*_started`` line (lookup_key,
+    match_key, subject_key, scan_key) and the resource/result on a later
+    completion line of the same trace. Both lines must be joined through
+    ``trace_id`` or the resource cannot be attributed to the subject.
+    """
     kv_re = re.compile(r'([a-zA-Z0-9_]+)=([^\s"]+|"[^"]*")')
 
+    parsed_lines: list[dict[str, Any]] = []
+    trace_ids: dict[str, set[str]] = {}
+
     with open(file_path, "r", encoding="utf-8", errors="replace") as lf:
-        for line in lf:
-            line = line.strip()
+        for raw in lf:
+            line = raw.strip()
             if not line:
                 continue
 
-            # Check for JSON line
+            fields: dict[str, Any] = {}
+            timestamp = re.match(r"^(\d{4}-\d{2}-\d{2}T\S+)", line)
+            if timestamp:
+                fields["observed_at"] = timestamp.group(1)
             if "{" in line and "}" in line:
                 try:
                     start = line.index("{")
                     end = line.rindex("}") + 1
                     data = json.loads(line[start:end])
-                    res_id = data.get("resource_id") or ""
-                    if res_id:
-                        sys_name = _normalize_system_id(data.get("service") or data.get("logger") or origin)
-                        uid = data.get("subject_reference") or data.get("customer_reference") or ""
-                        email = data.get("lookup_key") or data.get("email") or ""
-                        ids = {x for x in [uid, email] if x and x != "null"}
-                        event = data.get("event", "")
-                        rows = int(data.get("rows", 1)) if str(data.get("rows", "")).isdigit() else 1
-                        status = data.get("http_status")
-
-                        state = "PRESENT"
-                        if status == 404 or rows == 0:
-                            state = "ABSENT"
-                        elif "anonymiz" in event:
-                            state = "ANONYMIZED"
-
-                        records.append(
-                            ObservedRecord(
-                                evidence_id=file_id,
-                                file_path=file_path,
-                                captured_at=captured_at,
-                                origin=origin,
-                                system_id=sys_name,
-                                resource_id=res_id,
-                                data_category="USER_PROFILE",
-                                state=state,
-                                has_exposed_pii=bool(email and email != "null"),
-                                identifiers=ids,
-                                details=data,
-                                provenance=f"log_json:{res_id}",
-                            )
-                        )
-                        continue
+                    if isinstance(data, dict):
+                        fields.update(data)
                 except Exception:
                     pass
 
-            # Key-value extraction
             kvs = dict(kv_re.findall(line))
-            res_id = kvs.get("resource_id")
-            if not res_id:
-                continue
-            res_id = res_id.strip('"')
-            event = kvs.get("event", "").strip('"')
-
-            # Skip request initiation / query started lines (only completed outcomes count)
-            if event.endswith("_started") or event.endswith("_query_started"):
-                continue
-
-            sys_name = _normalize_system_id(kvs.get("service", origin))
-            uid = kvs.get("subject_reference", "").strip('"')
-            lookup_key = kvs.get("lookup_key", "").strip('"')
-            corr_key = kvs.get("correlation_key", "").strip('"')
-            ids = {x for x in [uid, lookup_key, corr_key] if x and x != "null"}
-
-            rows_str = kvs.get("rows", "1").strip('"')
-            rows = int(rows_str) if rows_str.isdigit() else 1
-            http_status = kvs.get("http_status", "").strip('"')
-
-            # Determine category and state
-            cat = "USER_PROFILE"
-            state = "PRESENT"
-            has_pii = bool(lookup_key and lookup_key != "null")
-
-            if http_status == "404" or rows == 0:
-                state = "ABSENT"
-                has_pii = False
-            elif sys_name == "security_service":
-                cat = "SECURITY_AUDIT_LOG"
-                state = "PRESENT"
-                has_pii = False
-            elif sys_name == "analytics_platform":
-                # If contact lookup with opt-in, it's a marketing profile!
-                if "contact_lookup" in event or kvs.get("email_opt_in") == "true":
-                    cat = "MARKETING_PROFILE"
-                    state = "PRESENT"
-                    has_pii = True
-                elif kvs.get("customer_reference") == "null" and (lookup_key == "null" or not lookup_key):
-                    cat = "ANALYTICS_PROFILE"
-                    state = "ANONYMIZED"
-                    has_pii = False
-                else:
-                    cat = "ANALYTICS_PROFILE"
-                    state = "PRESENT"
-                    has_pii = True
-            elif sys_name == "backup_service":
-                cat = "BACKUP_ARCHIVE"
-                state = "ACTIVE"
-            elif sys_name == "integration_service":
-                cat = "DATA_FLOW"
-                state = "ACTIVE"
-            elif sys_name == "search_service":
-                cat = "SEARCH_INDEX_ENTRY"
-                state = "PRESENT" if rows > 0 else "ABSENT"
-            elif sys_name == "support_platform":
-                cat = "SUPPORT_MESSAGE"
-                state = "PRESENT"
-
-            records.append(
-                ObservedRecord(
-                    evidence_id=file_id,
-                    file_path=file_path,
-                    captured_at=captured_at,
-                    origin=origin,
-                    system_id=sys_name,
-                    resource_id=res_id,
-                    data_category=cat,
-                    state=state,
-                    has_exposed_pii=has_pii,
-                    identifiers=ids,
-                    details=kvs,
-                    provenance=f"log_kv:{res_id}",
+            # Some exporters escape the quotes inside message="..." (\"key=value\").
+            # The plain kv regex stops at the first backslash-escaped quote and
+            # would drop every nested field (event, resource_id, identifiers).
+            escaped_message = re.search(r'\bmessage="((?:[^"\\]|\\.)*)"', line)
+            if escaped_message:
+                kvs["message"] = (
+                    escaped_message.group(1).replace('\\"', '"').replace("\\\\", "\\")
                 )
+            message = _clean_value(kvs.get("message"))
+            if "resource_id=" in message or "event=" in message:
+                kvs.update(dict(kv_re.findall(message)))
+            for key, value in _log_header_fields(line).items():
+                kvs.setdefault(key, value)
+            for key, value in kvs.items():
+                fields.setdefault(key, _clean_value(value))
+
+            if not fields:
+                continue
+            fields = {k: _clean_value(v) for k, v in fields.items()}
+            parsed_lines.append(fields)
+
+            trace_id = _clean_value(fields.get("trace_id"))
+            if trace_id:
+                ids = _collect_ids(fields) | _text_ids(fields)
+                if ids:
+                    trace_ids.setdefault(trace_id, set()).update(ids)
+
+    skip_events = {
+        "deletion_marker_check",
+        "cache_lookup",
+        "connection_acquired",
+        "dependency_retry",
+        "dependency_recovered",
+        "consumer_lag",
+        "checkpoint_saved",
+        "batch_started",
+        "export_started",
+        "export_completed",
+        "telemetry_flushed",
+        "cache_refresh",
+        "thumbnail_failed",
+    }
+
+    records: list[ObservedRecord] = []
+    for fields in parsed_lines:
+        resource_id = _clean_value(fields.get("resource_id"))
+        if not resource_id:
+            continue
+
+        event = _clean_value(fields.get("event"))
+        if event.endswith("_started") or event.endswith("_query_started"):
+            continue
+        if event in skip_events:
+            continue
+
+        trace_id = _clean_value(fields.get("trace_id"))
+        identifiers = _collect_ids(fields) | _text_ids(fields)
+        if trace_id:
+            identifiers.update(trace_ids.get(trace_id, set()))
+
+        service = (
+            _clean_value(fields.get("service"))
+            or _clean_value(fields.get("function"))
+            or _clean_value(fields.get("logger"))
+            or origin
+        )
+        system_id = _normalize_system_id(service)
+        if system_id in ("central_observability_export", "log_router", "service_readback_logs"):
+            system_id = _normalize_system_id(resource_id)
+
+        record_type = _clean_value(fields.get("record_type"))
+        system_hint = _normalize_system_id(_clean_value(fields.get("system")))
+        if system_hint in ("central_observability_export", "log_router"):
+            system_hint = ""
+        if system_hint:
+            # Lookup exports scan foreign systems; the record belongs to the
+            # system named in the row, not to the service producing the export.
+            system_id = system_hint
+        category = _category_for(
+            system_hint or system_id,
+            resource_id,
+            record_type,
+        )
+
+        # Legacy support contact lookups are subject-owned contact records.
+        if system_id == "support_platform" and "contact_query" in event:
+            category = "SUPPORT_ATTACHMENT"
+        elif system_id == "analytics_platform" and (
+            "contact_lookup" in event
+            or _clean_value(fields.get("email_opt_in")).lower() == "true"
+        ):
+            # Contact/opt-in lookups describe a marketing profile, which policy
+            # deletes outright rather than anonymizes.
+            category = "MARKETING_PROFILE"
+        elif category == "USER_PROFILE" and system_id == "integration_service":
+            category = "DATA_FLOW"
+
+        raw_result = _clean_value(fields.get("result"))
+        rows = _clean_value(fields.get("rows"))
+        total_hits = _clean_value(fields.get("total_hits"))
+        http_status = _clean_value(fields.get("http_status"))
+
+        state = _state_for_record(category, fields, raw_result)
+        if category == "USER_PROFILE":
+            if http_status == "404" or rows == "0" or raw_result.upper() == "NOT_FOUND":
+                state = "ABSENT"
+        elif category == "SEARCH_INDEX_ENTRY":
+            if http_status == "404" or rows == "0" or raw_result.upper() == "NOT_FOUND":
+                state = "ABSENT"
+            elif total_hits.isdigit():
+                state = "PRESENT" if int(total_hits) > 0 else "ABSENT"
+            elif raw_result.upper() in ("HIT", "FOUND"):
+                state = "PRESENT"
+        elif category == "SUPPORT_MESSAGE":
+            if event in ("message_pii_scan", "attachment_pii_scan", "attachment_scan_completed"):
+                state = "PRESENT"
+            elif _has_direct_pii(fields) or _text_ids(fields):
+                state = "PRESENT"
+            elif rows.isdigit() and int(rows) > 0:
+                state = "PRESENT" if (_has_direct_pii(fields) or _text_ids(fields)) else "REDACTED"
+            else:
+                state = _state_for_record(category, fields, raw_result)
+        elif category == "SUPPORT_ATTACHMENT":
+            state = "PRESENT"
+        elif category == "ANALYTICS_PROFILE":
+            direct = _clean_value(fields.get("direct_identifiers"))
+            if direct.isdigit() and int(direct) > 0:
+                state = "PRESENT"
+            elif event in ("analytics_identity_scan", "analytics_profile_scan"):
+                state = "PRESENT"
+            elif _has_direct_ids(fields):
+                state = "PRESENT"
+            else:
+                state = "ANONYMIZED"
+        elif category == "DATA_FLOW":
+            enabled = _clean_value(fields.get("enabled")).lower()
+            if enabled in ("true", "false"):
+                state = "ACTIVE" if enabled == "true" else "DISABLED"
+        elif category == "BACKUP_ARCHIVE":
+            block = _clean_value(fields.get("deletion_block")).lower()
+            allowed = _clean_value(fields.get("restore_allowed")).lower()
+            if allowed in ("true", "false"):
+                state = "ACTIVE" if allowed == "true" else "BLOCKED"
+            elif block == "true":
+                state = "BLOCKED"
+            elif block == "false" or _clean_value(fields.get("eligible")).lower() == "true":
+                state = "ACTIVE"
+        elif category == "USER_EXPORT":
+            available = _clean_value(fields.get("available")).lower()
+            if available in ("true", "false"):
+                state = "PRESENT" if available == "true" else "ABSENT"
+        elif category == "SECURITY_AUDIT_LOG":
+            state = "PRESENT"
+        elif category == "MARKETING_PROFILE":
+            state = "PRESENT"
+
+        records.append(
+            _make_record(
+                evidence_id=file_id,
+                file_path=file_path,
+                captured_at=_observation_time(fields, captured_at),
+                origin=origin,
+                system_id=system_id,
+                resource_id=resource_id,
+                category=category,
+                state=state,
+                identifiers=identifiers,
+                details=fields,
+                provenance=f"log:{resource_id}",
             )
+        )
 
     return records
 
@@ -1064,24 +1235,39 @@ class EvidenceCorpus:
         self,
         identifiers: set[str],
         audit_at: datetime,
+        not_before: Optional[datetime] = None,
     ) -> list[ObservedRecord]:
-        """Return all records matching any identifier in `identifiers` captured <= audit_at."""
+        """Return records matching any identifier captured in the allowed window.
+
+        ``audit_at`` is the hard upper bound. ``not_before`` optionally excludes
+        evidence that predates the deletion request: such a capture describes an
+        earlier state and cannot prove the post-request state.
+        """
         if audit_at.tzinfo is None:
             raise ValueError(f"audit_at must be timezone-aware: {audit_at!r}")
+        if not_before is not None and not_before.tzinfo is None:
+            raise ValueError(f"not_before must be timezone-aware: {not_before!r}")
 
         matched: list[ObservedRecord] = []
         seen_keys: set[tuple[str, str, datetime]] = set()
+        normalized_ids = {ident.strip().lower() for ident in identifiers}
+        linked_resources: set[tuple[str, str]] = set()
 
-        for ident in identifiers:
-            norm = ident.strip().lower()
-            for rec in self._by_identifier.get(norm, []):
-                if rec.captured_at <= audit_at:
-                    k = (rec.system_id, rec.resource_id, rec.captured_at)
-                    if k not in seen_keys:
-                        seen_keys.add(k)
-                        matched.append(rec)
+        for rec in self.records:
+            if rec.captured_at <= audit_at and rec.normalized_identifiers & normalized_ids:
+                linked_resources.add((rec.system_id, rec.resource_id))
 
-        # Sort newest evidence first
+        for system_id, resource_id in linked_resources:
+            for rec in self._by_resource.get(resource_id, []):
+                if rec.system_id != system_id or rec.captured_at > audit_at:
+                    continue
+                if not_before is not None and rec.captured_at < not_before:
+                    continue
+                k = (rec.system_id, rec.resource_id, rec.captured_at)
+                if k not in seen_keys:
+                    seen_keys.add(k)
+                    matched.append(rec)
+
         matched.sort(key=lambda r: r.captured_at, reverse=True)
         return matched
 
@@ -1089,10 +1275,15 @@ class EvidenceCorpus:
         self,
         resource_id: str,
         audit_at: datetime,
+        not_before: Optional[datetime] = None,
     ) -> list[ObservedRecord]:
         if audit_at.tzinfo is None:
             raise ValueError("audit_at must be timezone-aware")
-        recs = [r for r in self._by_resource.get(resource_id, []) if r.captured_at <= audit_at]
+        recs = [
+            r for r in self._by_resource.get(resource_id, [])
+            if r.captured_at <= audit_at
+            and (not_before is None or r.captured_at >= not_before)
+        ]
         recs.sort(key=lambda r: r.captured_at, reverse=True)
         return recs
 

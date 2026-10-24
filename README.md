@@ -155,3 +155,78 @@ Before submitting, confirm that:
 - `code.zip` includes your runnable code, `README.md`, `code/evaluation/evaluation_report.md`, and `code/evaluation/usage_report.md`;
 - `log.txt` follows the `AGENTS.md` turn format and is uploaded to the `chat_transcript` slot; and
 - no API keys, credentials, real personal data, or sensitive configuration values are included.
+
+---
+
+## Solution — implementation in this repository
+
+### What it does
+
+`code/main.py` reads the participant-facing files in `dataset/` and writes
+`output.csv` at the repository root. The pipeline is deterministic and
+rule-based; it makes no LLM or network calls, so the run costs $0 and is
+reproducible.
+
+Pipeline stages:
+
+1. `load_datasets` loads and validates the CSVs (518 requests, 850 identities,
+   306 audit-log rows, 4 011 activity events, 15 deletion rules, 94 evidence
+   files).
+2. `classify_request` detects deletion intent in EN/ES/PT/FR/JA/KO, with
+   negation, marketing opt-out, access/export and keep-intent handling.
+3. `resolve_identity` joins each request email to a user through current and
+   historical emails, hashed identifiers, phone numbers and user IDs.
+4. `load_evidence_corpus` parses SQL snapshots, JSON bundles, logs (key=value,
+   JSON, pipe, syslog), PDFs and catalogued images into normalised records.
+5. `reconstruct_case_state` keeps only records captured inside
+   `[requested_at, audit_at]`, deduplicates them (newest capture wins), applies
+   `deletion_rules.csv`, and emits FINDING / REMEDIATION / VERIFICATION steps.
+6. The CSV is written sorted by `case_id` with the required header.
+
+### Setup
+
+Python 3.10+ (verified on 3.14.7).
+
+```bash
+pip install -r code/requirements.txt
+```
+
+Only `pypdf` is required at runtime. `pytest` is needed to run the tests.
+
+### Run
+
+```bash
+python code/main.py            # regenerates ./output.csv (518 rows)
+python -m pytest code/tests -q # 92 tests
+python code/evaluation/main.py # sample scoring + full output validation
+```
+
+`code/evaluation/main.py` exits non-zero if the 518-row output violates the
+contract; the last run reported 0 errors.
+
+### Reports
+
+- `code/evaluation/evaluation_report.md` — contract checks, sample metrics,
+  custom evaluation cases, defects found and fixed.
+- `code/evaluation/usage_report.md` — full-dataset run measurements, model/token
+  usage and cost (0 calls, $0.00).
+
+### Design guarantees
+
+- Only evidence with a timestamp at or before `audit_at` (and at or after
+  `requested_at`) can decide a case.
+- A case is `COMPLETE` only when every in-scope resource has an evidenced
+  compliant state; missing evidence yields `INCOMPLETE`, never an invented
+  record.
+- Findings and `COMPLETE` verifications cite a `file_id`, `activity_id` or
+  `audit_id`; remediation and future verification steps use `evidence_id=""`.
+
+### Known limitation
+
+Twenty-seven public-sample steps remain unrecoverable from participant-visible
+evidence: 18 account, 7 anonymous analytics, and 2 retained-audit verifications.
+The relevant resource names or anonymous rows do not establish a subject link;
+sparse snapshots cannot supply that mapping. The agent does not infer IDs from
+sample answers, neighboring activity, or naming patterns. Three cases are
+therefore reported `INCOMPLETE` instead of gold `COMPLETE`; the evaluation
+report lists every remaining per-case mismatch.
