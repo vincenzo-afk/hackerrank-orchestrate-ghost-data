@@ -191,7 +191,7 @@ def _clean_value(value: Any) -> str:
 
 
 def _observation_time(item: dict[str, Any], default: datetime) -> datetime:
-    for key in ("observed_at", "captured_at"):
+    for key in ("observed_at", "captured_at", "recorded_at"):
         value = _clean_value(item.get(key))
         if value:
             return _parse_iso(value)
