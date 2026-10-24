@@ -197,7 +197,7 @@ Only `pypdf` is required at runtime. `pytest` is needed to run the tests.
 
 ```bash
 python code/main.py            # regenerates ./output.csv (518 rows)
-python -m pytest code/tests -q # 92 tests
+python -m pytest code/tests -q # 100 tests
 python code/evaluation/main.py # sample scoring + full output validation
 ```
 
@@ -214,7 +214,9 @@ contract; the last run reported 0 errors.
 ### Design guarantees
 
 - Only evidence with a timestamp at or before `audit_at` (and at or after
-  `requested_at`) can decide a case.
+  `requested_at`) can decide a case. Record-level JSON `recorded_at` values
+  take precedence over the enclosing snapshot/export time, while more specific
+  `observed_at` and record-level `captured_at` fields retain precedence.
 - A case is `COMPLETE` only when every in-scope resource has an evidenced
   compliant state; missing evidence yields `INCOMPLETE`, never an invented
   record.

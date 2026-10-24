@@ -1,6 +1,6 @@
 # Evaluation Report — Ghost Data Still Exists
 
-All results below were measured on 2026-10-24 with Python 3.14.7. Reproduce from the repository root:
+All results below were measured on 2026-10-25 with Python 3.14.7. Reproduce from the repository root:
 
 ```bash
 python -X utf8 code/main.py
@@ -16,25 +16,27 @@ The pipeline is deterministic and makes no model or external API calls.
 | --- | --- |
 | Requests / output rows | 518 / 518 |
 | Sorted, unique `case_id` values | pass |
-| Status distribution | COMPLETE 147; INCOMPLETE 361; NOT_APPLICABLE 10 |
-| JSON steps | 2,808 total; 5.42 per request |
+| Status distribution | COMPLETE 150; INCOMPLETE 358; NOT_APPLICABLE 10 |
+| JSON steps | 2,823 total; 5.45 per request |
 | Consecutive step numbers and exact seven-field schema | pass |
 | Phase, operation, system, and resource ordering | pass |
 | Allowed operation/state combinations | pass |
 | Finding and COMPLETE-verification citations | pass; cited observation exists and is inside the request window |
 | Remediation and INCOMPLETE-verification evidence fields | pass; all empty |
-| COMPLETE rows containing only evidence-backed verifications | pass, 147/147 |
+| COMPLETE rows containing only evidence-backed verifications | pass, 150/150 |
 | Empty step arrays | 10, all NOT_APPLICABLE |
 | Validator errors | **0** |
 
-The final `output.csv` is 561,255 bytes with SHA-256 `fb411471179a5551cb9edeb6e529612b060427c7fdf108747aff291021d278ba`. In the final audit run, the full pipeline exited 0 in 7.500 seconds and reproduced this byte-identical file; earlier runs took 6.489 seconds, so wall-clock time varies with machine load while output is deterministic.
+The final `output.csv` is 564,376 bytes with SHA-256 `e9227291f636af17b44190ab61f3e95eafbffe82c7004760006bbf0c8ace745e`. In the final audit run, the full pipeline exited 0 in 9.922 seconds; a repeat run took 10.145 seconds and produced the same hash. Wall-clock time varies with machine load while output is deterministic.
 
-The parser read 94 evidence files into 2,911 normalized records; 68 evidence files are cited in the final output. Findings comprise 366 remaining records, 199 exposed-PII records, 113 active data flows, and 31 restore risks.
+The parser read 94 evidence files into 2,911 normalized records; 69 evidence files are cited in the final output. Findings comprise 365 remaining records, 187 exposed-PII records, 113 active data flows, and 31 restore risks.
+
+The record-level `recorded_at` correction changed 25 evaluation rows: three status flips (`case_342`, `case_390`, and `case_484` from INCOMPLETE to COMPLETE) and 22 same-status step corrections. Public-sample metrics were unchanged.
 
 | Reported workflow status | Requests | COMPLETE | INCOMPLETE | NOT_APPLICABLE |
 | --- | ---: | ---: | ---: | ---: |
-| COMPLETE | 254 | 90 | 164 | 0 |
-| PARTIALLY_COMPLETE | 152 | 35 | 117 | 0 |
+| COMPLETE | 254 | 92 | 162 | 0 |
+| PARTIALLY_COMPLETE | 152 | 36 | 116 | 0 |
 | NOT_STARTED | 112 | 22 | 80 | 10 |
 
 All 518 request emails resolved: 418 through current email and 100 through historical email. Intent classification produced 508 deletion cases and 10 NOT_APPLICABLE cases.
@@ -60,6 +62,8 @@ A step matches only when `phase`, `system_id`, `resource_id`, `operation`, `stat
 | Missing-step-penalized field accuracy | 0.710585 | 0.753516 | +0.042931 |
 
 The aligned denominator is seven fields for each matched step: 158 steps × 7 = 1,106 at baseline and 166 × 7 = 1,162 final. The missing-step-penalized denominator is 193 gold steps × 7 = 1,351 in both runs; no predicted sample step is extraneous. The baseline's originally reported 0.867993 used the aligned denominator, so the comparable final aligned value is 0.876076, not 0.753516.
+
+The public-sample metrics above are unchanged by the `recorded_at` correction because none of the six record-level timestamp formats affects the 32 sample cases.
 
 Eight previously missing steps were recovered without using sample answers at inference:
 
@@ -105,7 +109,7 @@ Sparse or empty snapshots also do not supply the missing resource-to-subject map
 
 ## 3. Regression tests
 
-`python -X utf8 -m pytest code/tests -q` exited 0 with **92 passed**. The suite includes the original foundation/evidence/state tests plus participant-created CE cases:
+`python -X utf8 -m pytest code/tests -q` exited 0 with **100 passed**. The suite includes the original foundation/evidence/state tests plus participant-created CE cases:
 
 | Group | Coverage |
 | --- | --- |
@@ -115,6 +119,7 @@ Sparse or empty snapshots also do not supply the missing resource-to-subject map
 | CE-4 | Exposed versus clean account tombstones |
 | CE-5 | `source_resource_id` adds a future check without converting an activity claim into proof |
 | Parser regression | Real `evidence_06` log-line and `evidence_02` snapshot timestamps override manifest export times |
+| Recorded-at regression | Record-level timestamp precedence, six JSON formats, exact boundaries, stale FOUND vs newer ABSENT, post-audit reappearance, and exact-at-audit COMPLETE flips |
 
 ## 4. Defects fixed in the final takeover
 
@@ -124,13 +129,14 @@ Sparse or empty snapshots also do not supply the missing resource-to-subject map
 4. **Linked source resources were omitted from future checks.** Explicit `source_resource_id` links plus an in-window policy activity can add a future verification only to an INCOMPLETE case. They cannot create evidence-backed state or a COMPLETE verdict.
 5. **Field accuracy ignored missing steps.** The evaluator now penalizes all fields of missing and extra steps.
 6. **Validation checked only manifest time and IDs.** It now verifies the cited system/resource/state observation and its internal timestamp, full operation ordering, and COMPLETE phase semantics.
+7. **Record-level `recorded_at` was ignored.** Six JSON evidence formats used the enclosing snapshot or manifest time instead of each record's observation time. The parser now preserves `observed_at` and record-level `captured_at` precedence, then falls back to `recorded_at`. This admitted exact-at-audit observations, blocked later reappearances from changing earlier answers, and removed stale findings. Regression coverage is in `code/tests/test_recorded_at.py`.
 
 Earlier fixes retained in this submission include escaped-message decoding, trace-context propagation, ACTIVE profile normalization, catalog identity links, correct service attribution, false-COMPLETE guards, and package-safe repository-root detection.
 
 ## 5. Residual semantic risks
 
 - Public samples cannot establish the 27 mappings listed above; hidden-case accuracy cannot be measured locally.
-- The legal retention register `evidence_27` contains six `ORD-*` rows for `user_08`, `user_12`, `user_17`, `user_21`, `user_24`, and `user_29`, but the PDF parser does not extract them. It is captured 2026-05-29T08:00:00Z. Only `user_17` has a request (`case_46`, requested 2026-03-08, audit 2026-03-11), and the register is after that audit cutoff; the other five users have no request. The gap therefore changes no current decision but remains a coverage limitation for unseen data.
+- The legal retention register `evidence_27` contains six `ORD-*` rows for `user_08`, `user_12`, `user_17`, `user_21`, `user_24`, and `user_29`, but the PDF parser does not extract them. It is captured 2026-05-29T08:00:00Z. All six users have requests, but none is admissible: `case_46` (user_17, requested 2026-03-08, audit 2026-03-11) audits before the register capture, while the other requests are submitted after 2026-05-29 and are excluded by the request lower bound. The gap therefore changes no current decision but remains a coverage limitation for unseen data.
 - The implementation uses `[requested_at, audit_at]` for state observations. The written contract explicitly states the upper cutoff, while the public samples also reject stale pre-request state. A controlled temporary build with `not_before=None` measured exact cases 10/32, TP/FP/FN 165/6/28 (versus 12/32 and 166/0/27), and the evaluator exited 1 on full-output validation. The lower bound was therefore retained.
 - A resource with several same-state observations can legitimately support more than one citation. The deterministic earliest-confirming rule matches the public convention while newest-state conflict handling remains unchanged.
 - `agent-trace.zip` must be staged only after the relevant sessions are closed, then reviewed for secrets, personal information, and unrelated files as required by `agent_trace_instructions.md`.

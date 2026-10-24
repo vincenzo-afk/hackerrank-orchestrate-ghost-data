@@ -1,6 +1,6 @@
 # Usage Report — Ghost Data Still Exists
 
-Measured on 2026-10-24 on the full 518-request dataset (`dataset/deletion_requests.csv`).
+Measured on 2026-10-25 on the full 518-request dataset (`dataset/deletion_requests.csv`).
 
 ## 1. Model usage
 
@@ -37,22 +37,22 @@ python -X utf8 code/main.py
 | Output rows written | 518 (`./output.csv`) |
 | Evidence files parsed | 94 |
 | Normalised evidence records | 2 911 |
-| Steps generated | 2 808 |
-| Average steps per request | 5.42 |
-| Wall-clock runtime | **7.500 s** (final audit run; earlier run 6.489 s) |
-| Average runtime per request | **~14.5 ms** |
+| Steps generated | 2 823 |
+| Average steps per request | 5.45 |
+| Wall-clock runtime | **9.922 s** (final audit run; repeat 10.145 s) |
+| Average runtime per request | **~19.2 ms** |
 | Memory / token cost per request | not applicable (no model; no per-request network work) |
 | Exit code | 0 |
 
-Status distribution: INCOMPLETE 361, COMPLETE 147, NOT_APPLICABLE 10.
-The output is 561 255 bytes, with SHA-256
-`fb411471179a5551cb9edeb6e529612b060427c7fdf108747aff291021d278ba`.
+Status distribution: INCOMPLETE 358, COMPLETE 150, NOT_APPLICABLE 10.
+The output is 564 376 bytes, with SHA-256
+`e9227291f636af17b44190ab61f3e95eafbffe82c7004760006bbf0c8ace745e`.
 
 ## 3. Verification runs
 
 | Command | Result |
 | --- | --- |
-| `python -X utf8 -m pytest code/tests -q` | **92 passed** (66 foundation + 14 evidence/state + 12 participant-created custom-evaluation tests), exit 0 |
+| `python -X utf8 -m pytest code/tests -q` | **100 passed** (66 foundation + 14 evidence/state + 12 participant-created custom-evaluation + 8 recorded-at regression tests), exit 0 |
 | `python -X utf8 code/evaluation/main.py` | 0 contract errors; sample status accuracy 29/32; exact cases 12/32; step TP/FP/FN 166/0/27; precision 1.0, recall 0.860104, F1 0.924791 |
 | `python -X utf8 code/main.py` (repeat) | byte-identical `output.csv` (deterministic) |
 
