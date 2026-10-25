@@ -23,11 +23,13 @@ from typing import Optional
 try:
     from evidence_parser import load_evidence_corpus, EvidenceCorpus
     from state_reconstruction import reconstruct_case_state, AuditStep
+    from policy_engine import PolicyEngine
 except Exception:  # pragma: no cover - keep module importable in minimal envs
     load_evidence_corpus = None  # type: ignore
     EvidenceCorpus = None  # type: ignore
     reconstruct_case_state = None  # type: ignore
     AuditStep = None  # type: ignore
+    PolicyEngine = None  # type: ignore
 
 # Reconfigure stdout/stderr to UTF-8 so Japanese/accents print cleanly on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -156,6 +158,7 @@ class Datasets:
     system_activity: list[dict]
     deletion_rules: list[dict]
     evidence_files: list[EvidenceFile]
+    policy: Optional[object] = None
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +316,7 @@ def load_datasets(dataset_dir: Path = DATASET_DIR) -> Datasets:
         system_activity=activity_rows,
         deletion_rules=rules_rows,
         evidence_files=evidence_files,
+        policy=PolicyEngine.from_rows(rules_rows) if PolicyEngine else None,
     )
 
 
@@ -755,12 +759,21 @@ def audit_request(req, datasets, corpus) -> tuple[str, list, Optional[str]]:
             system_activity=datasets.system_activity,
             require_evidence=True,
             not_before=req.requested_at,
+            policy_engine=datasets.policy,
         )
     except Exception as exc:  # pragma: no cover - defensive
         print(f"WARN {req.case_id}: reconstruction failed: {exc}", file=sys.stderr)
         return "INCOMPLETE", [], "reconstruction_error"
 
     return result.deletion_status, result.steps, None
+
+
+def _write_output_csv(rows, output_path: Path) -> None:
+    with open(output_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+        writer.writerow(["case_id", "deletion_status", "steps_json"])
+        for cid, status, steps_json in rows:
+            writer.writerow([cid, status, steps_json])
 
 
 def run_full_pipeline(dataset_dir=None, output_path=None) -> Path:
@@ -792,11 +805,7 @@ def run_full_pipeline(dataset_dir=None, output_path=None) -> Path:
 
     rows.sort(key=lambda r: r[0])
 
-    with open(output_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
-        writer.writerow(["case_id", "deletion_status", "steps_json"])
-        for cid, status, steps_json in rows:
-            writer.writerow([cid, status, steps_json])
+    _write_output_csv(rows, output_path)
 
     if unresolved or pipeline_errors:
         print(
