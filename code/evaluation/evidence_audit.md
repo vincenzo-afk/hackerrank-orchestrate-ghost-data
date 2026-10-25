@@ -1,3 +1,5 @@
+> **Superseded (2026-10-25).** This audit describes the earlier pipeline (account-closure gate, identifier-only linking). The current design and measured results are in `evaluation_report.md`.
+
 # Evidence Corpus and System-State Audit Report
 **HackerRank Orchestrate (October 2026) — Ghost Data Still Exists**
 *Report Date: 2026-10-24*

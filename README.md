@@ -164,129 +164,110 @@ Before submitting, confirm that:
 
 `code/main.py` reads the participant-facing files in `dataset/` and writes
 `output.csv` at the repository root. The production run is deterministic and
-offline; it makes no model or network calls, so the run costs $0 and is
-reproducible. Image records come from a SHA-validated cache of observations
-extracted from the actual image bytes by Gemini; an explicit live refresh path
-is available for regenerating observations.
+offline: it makes no model or network calls. Screenshot evidence is read
+through a SHA-validated cache of visible facts that a vision model transcribed
+from the image bytes (`code/media_observations.json`); the cache is rebuilt
+only by the explicit refresh command below.
 
-Pipeline stages:
+The pipeline is a global, multi-pass audit. All 518 evaluation requests and
+the 32 sample requests are linked together, because a deletion-worker event
+can belong to only one request; each output subset is then audited and
+validated separately.
 
-1. `load_datasets` loads and validates the CSVs (518 requests, 850 identities,
-   306 audit-log rows, 4 011 activity events, 15 deletion rules, 94 evidence
-   files).
-2. `classify_request` detects deletion intent in EN/ES/PT/FR/JA/KO, with
-   negation, marketing opt-out, access/export and keep-intent handling.
-3. `resolve_identity` joins each request email to a user through current and
-   historical emails, hashed identifiers, phone numbers and user IDs.
-4. `load_evidence_corpus` parses SQL snapshots, JSON bundles, logs (key=value,
-   JSON, pipe, syslog), PDFs and SHA-validated Gemini-derived image observations
-   into normalised records.
-5. `reconstruct_case_state` keeps only records captured inside
-   `[requested_at, audit_at]`, deduplicates them (newest capture wins), applies
-   the condition-bearing `deletion_rules.csv` through `code/policy_engine.py`,
-   and emits FINDING / REMEDIATION / VERIFICATION steps.
-6. The CSV is written sorted by `case_id` with the required header.
+1. **Authorize.** `classify_request` reads only `request_text` (EN/ES/PT/FR/JA/KO)
+   and returns `NOT_APPLICABLE,[]` for access, export, correction, login help,
+   marketing-only opt-out and negated deletion. `reported_status` is never used.
+2. **Resolve identity.** Current and historical emails, phones, hashes and the
+   `user_id`, bounded by `audit_at`. Names are never used to match records.
+3. **Normalize evidence** (`code/evidence_parser.py`). Every observation records
+   system, resource, physical copy (primary or named replica), category, state,
+   identifiers, the time the state held (`observed_at`) and the time its file
+   existed (`available_at`). Snapshot coverage is recorded too: which store,
+   category and copy a capture is complete for, and for which subjects.
+   Images and PDFs resolve file names, statement numbers and references through
+   `LINK_RESOURCE_IDENTITY` catalog aliases; nothing is minted from a file name.
+4. **Link resources globally** (`code/activity_linker.py`). Deleted accounts and
+   anonymized analytics carry no identifier. The linker learns the deletion
+   worker's cadence from identifier-resolved requests (timing window per
+   template, `reported_status`/`reported_result` agreement, audit-time proximity
+   of readbacks, and a per-request sub-minute phase shared by all of a request's
+   worker events), then assigns the remaining events with a one-to-one
+   minimum-cost (Hungarian) matching per target system. Low-margin assignments
+   are kept as diagnostics. Resources whose evidence names another known
+   subject are never assigned. A data-derived profile-naming fallback is used
+   only when no account was recovered and only if a snapshot proves its state.
+5. **Reconstruct and plan** (`code/state_reconstruction.py`). Each physical copy
+   is reconstructed independently; any surviving copy that must be deleted is a
+   violation. Absence is inferred from a snapshot omission only when the
+   snapshot is complete for that store, category, copy and subject, and was
+   taken after the deletion ran. `deletion_rules.csv` is applied through
+   `code/policy_engine.py`. A case is `COMPLETE` only when every in-scope
+   resource has its required state proven by evidence that existed at
+   `audit_at`; there is no separate account-closure flag.
+6. **Validate and write** (`code/output_validator.py`). The contract is checked
+   before `output.csv` is written; an invalid output is never written.
 
 ### Setup
 
-Python 3.10+ (verified on 3.14.7).
+Python 3.10+ (verified on 3.12).
 
 ```bash
 pip install -r code/requirements.txt
 ```
 
-`pypdf` is required for PDF extraction. `pydantic` and `google-genai` are
-required for the optional live Gemini refresh path; the normal offline run uses
-the checked-in SHA-validated cache and does not call Gemini. `pytest` is needed
-to run the tests.
+`pypdf` reads PDF evidence. `pydantic` and `google-genai` are used only by the
+optional media refresh; `pytest` runs the tests.
 
 ### Run
 
 ```bash
-python code/main.py            # regenerates ./output.csv (518 rows)
-python -m pytest code/tests -q # 202 tests passed, 1 live test skipped by default
-python code/evaluation/main.py # sample scoring + full output validation
+python code/main.py             # writes ./output.csv (518 rows), fails closed on contract errors
+python -m pytest code/tests -q  # unit, regression and dataset tests
+python code/evaluation/main.py  # sample scoring + full output validation + linker diagnostics
 ```
 
-`code/evaluation/main.py` exits non-zero if the 518-row output violates the
-contract; the last run reported 0 errors.
+### Media refresh (explicit, optional)
 
-### Gemini image refresh (explicit, optional)
-
-The normal run never calls the network. To refresh observations for one local
-image, set `GEMINI_API_KEY` in the environment and run:
+The normal run never calls a model. To rebuild the image cache from the
+screenshots, put the key in the environment (never in a file) and run:
 
 ```bash
-python code/gemini_extractor.py dataset/evidence/images/support_ticket_console_20260524.png evidence_28
+GROQ_API_KEY=... python code/refresh_media_cache.py                      # qwen/qwen3.8-27b on Groq
+GEMINI_API_KEY=... python code/refresh_media_cache.py --provider gemini  # alternative provider
 ```
 
-`GEMINI_MODEL` defaults to `gemini-3.8-flash`; set it explicitly to use another
-model available to the account. Only the selected image bytes and the extraction
-prompt are sent to Gemini. No API key, dataset archive, or `log.txt` is uploaded.
-The extractor validates the JSON schema, rejects invented identifiers/resource
-IDs, caches by source SHA-256 + model + prompt version, and never chooses a
-deletion status or remediation step. Do not commit the API key or `.gemini_cache/`.
-The final offline run reported in `code/evaluation/usage_report.md` makes zero
-model calls; the separate controlled Gemini extraction experiment is documented
-there.
+The model is asked only for visible facts (printed ids, aliases, identifiers,
+timestamps, the screen's own record label, visible controls) and must quote the
+supporting text. Responses with extra fields such as a system, category or
+state are rejected, and every id or identifier must appear in the quoted text.
+Resource ids, categories and states are derived deterministically from those
+facts. The cache is keyed by image SHA-256, model and prompt version.
 
 ### Reports
 
 - `code/evaluation/evaluation_report.md` — contract checks, sample metrics,
-  custom evaluation cases, defects found and fixed.
-- `code/evaluation/usage_report.md` — final offline full-dataset measurements
-  (0 model calls, $0.00) plus the separate controlled Gemini extraction
-  experiment and token counts.
+  custom evaluation cases, failures found and improvements made.
+- `code/evaluation/usage_report.md` — model usage for the final run.
 
 ### Design guarantees
 
-- Only evidence with a timestamp at or before `audit_at` (and at or after
-  `requested_at`) can decide a case. Record-level JSON `recorded_at` values
-  take precedence over the enclosing snapshot/export time, while more specific
-  `observed_at` and record-level `captured_at` fields retain precedence.
-- Identity history is bounded by `audit_at`: later email/phone/hash changes and
-  later snapshot updates are not used to resolve or link a case.
-- A case is `COMPLETE` only when the account closure is evidenced (an absent
-  `USER_PROFILE` or a clean `ACCOUNT_TOMBSTONE`) and every evidence-supported
-  resource/category has a policy-compliant verification. This closure condition
-  is an inferred minimum from the account-deletion scope and the “every
-  relevant copy” rule; it is not a separately named CSV rule. Unobserved
-  categories are not treated as absent; missing evidence yields `INCOMPLETE`,
-  never an invented record.
-- Support tickets retain both `SUPPORT_MESSAGE` and `SUPPORT_ATTACHMENT`
-  treatments when they share a resource ID. Activity identity links are used
-  only when the evidence record already contains a matching subject identifier;
-  the record's observation timestamp is never replaced by the link timestamp.
-- Findings and `COMPLETE` verifications cite a `file_id`, `activity_id` or
-  `audit_id`; remediation and future verification steps use `evidence_id=""`.
-- Image observations are loaded only when the cache is valid and the actual
-  image SHA-256 matches the cache entry. Missing, malformed, incomplete, or
-  hash-mismatched cache evidence fails the run instead of silently shrinking
-  the evidence set.
-- Policy decisions are selected from `deletion_rules.csv`; false conditions,
-  unsupported conditions, unknown categories, and unknown support-attachment
-  ownership fail closed and cannot manufacture a complete verdict.
-- Explicit absence (`NOT_FOUND`/equivalent) is never converted into `PRESENT`,
-  `REDACTED`, or `ANONYMIZED`. Non-empty raw result tokens outside the
-  recognized vocabulary become `UNKNOWN` and force an INCOMPLETE evidence gap.
-  Malformed SQL/JSON/log records and unsupported evidence formats raise an
-  explicit parse error.
-- Required imports and every case reconstruction are fail-visible. A parser,
-  cache, policy, or reconstruction failure raises with the affected `case_id`
-  and writes no output CSV instead of emitting a plausible `INCOMPLETE` row.
+- A state counts only if it held at or before `audit_at` (and at or after
+  `requested_at`). It can be cited, or prove compliance, only if its file
+  existed by `audit_at`; a state known only from a later file becomes an
+  evidence gap with a future verification step.
+- Workflow statuses and activity results are claims. Activity establishes
+  ownership; readbacks and complete snapshots establish state.
+- Findings cite a participant-visible `file_id`; remediation and future
+  verification steps use `evidence_id=""`.
+- Unknown categories, unreadable results and unsupported conditions fail closed.
+  Malformed evidence and an invalid media cache stop the run.
+- Production code reads no sample answers or organizer files and contains no
+  case ids (enforced by a test).
 
-### Known limitation
+### Known limitations
 
-Thirty-seven public-sample gold steps remain unmatched: 27 are unrecoverable
-from participant-visible evidence (18 account, 7 anonymous analytics, and 2
-retained-audit verifications), and 10 are verifications whose evidence fields
-become future checks when the conservative account-closure gate returns
-`INCOMPLETE`. The relevant resource names or anonymous rows do not establish a
-subject link; sparse snapshots cannot supply that mapping. The agent does not
-infer IDs from sample answers, neighboring activity, or naming patterns.
-
-The account-closure gate also moved 76 full-dataset cases from `COMPLETE` to
-`INCOMPLETE` because no evidence-backed absent profile or clean tombstone exists
-for them. That is a conservative evidence decision, not proof that those
-accounts exist. The evaluation report lists the status and step differences and
-all remaining public per-case mismatches.
+- Two public-sample steps are unmatched: retained audit records that appear in
+  no participant-visible file or activity.
+- Some deletion-worker events fall in bursts where several requests share
+  every signal. They are assigned deterministically and listed as low-margin
+  diagnostics by `code/evaluation/main.py`.

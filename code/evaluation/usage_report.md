@@ -1,85 +1,65 @@
 # Usage Report — Ghost Data Still Exists
 
-Measured on 2026-10-25 on the full 518-request dataset (`dataset/deletion_requests.csv`).
+Measured on 2026-10-25.
 
-## 1. Model usage
+## 1. Final full-dataset run (the run that produced `output.csv`)
 
-The submitted agent is a deterministic rule-based pipeline. The final
-full-dataset run does **not** call an LLM or any external API. Image records are
-read from a SHA-validated cache of observations produced by a separate,
-explicitly requested Gemini extraction experiment.
-
-| Provider | Model | Calls | Input tokens | Output tokens | Total tokens | Cost |
-| --- | --- | --- | --- | --- | --- | --- |
-| none | none | **0** | **0** | **0** | **0** | **$0.00** |
-
-| Aggregate | Value |
+| Item | Value |
 | --- | --- |
-| Total model calls | 0 |
-| Total tokens | 0 |
-| Average tokens per request | 0 |
-| Estimated total cost | $0.00 |
-| Estimated cost per request | $0.00 |
+| Command | `python code/main.py` |
+| Requests processed | 518 evaluation (+32 sample requests linked in the same global pass) |
+| Model providers / models called | none |
+| Model calls | 0 |
+| Input / output tokens | 0 / 0 |
+| Total / average tokens per request | 0 / 0 |
+| Estimated cost | $0.00 total; $0.00 per request |
+| Wall-clock | about 3 s |
 
-No API keys, endpoints, or credentials are read or required. All reasoning
-(identity resolution, intent classification, evidence parsing, policy
-application, step planning) is implemented in Python under `code/`.
+Screenshot evidence is read from `code/media_observations.json`, a cache of
+visible facts keyed by each image's SHA-256. The production run only reads that
+cache. It was built earlier with `gemini-3.8-flash` (11 images, one call each)
+and spot-checked against the screenshots in this revision.
 
-## 2. Full-dataset run
+## 2. Media-extraction runs made in this revision
 
-Command:
+| Provider | Model | Images | Calls | Input tokens | Output tokens | Total tokens | Cost | Used in final output? |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Groq (free tier) | `qwen/qwen3.8-27b` | 11 | 11 successful (+1 rate-limited retry, +1 prompt probe) | 22,451 | 9,524 | 31,975 | $0.00 (free tier) | **No — rejected** |
+| Google | `gemini-3.8-flash` | 1 of 11 before the run was stopped | 1–2 | not recorded (run interrupted) | — | — | free tier | No |
+| **Total recorded** | | | | **22,451** | **9,524** | **31,975** | **$0.00** | |
+
+Per-request average for the Groq experiment, if it were attributed to the 518
+requests: 61.7 tokens per request. It does not apply to the final run, which
+makes no calls.
+
+Groq's only vision-capable model was the requested replacement for Gemini. Its
+output was checked against the screenshots before use and rejected:
+
+- evidence_09: read the look-alike decoy `g.silva76.jr@gmail.com` as
+  `g.silva76@gmail.com`. That would attribute another person's search record
+  to case_35.
+- evidence_28: read `kagyeman8947@fastmail.com` as
+  `kagayeman8947@fastmail.com`. A stricter character-by-character prompt gave
+  the same result.
+- evidence_32: truncated decoy addresses (`bluepeakco` → `bluepeako`,
+  `company.com` → `company.co`).
+
+With that cache, the output validator also refused to write `output.csv`
+(2 authorized empty plans). Two interpreter defects it exposed were fixed: a
+screen-level reference was treated as a record, and a printed user reference
+was not resolved through the catalog. The rejected cache is kept for audit at
+`code/evaluation/groq_media_observations_rejected.json` and contains no keys.
+With the verified cache, the final output is byte-identical before and after
+those fixes.
+
+## 3. Rebuilding the cache
 
 ```bash
-python -X utf8 code/main.py
+GROQ_API_KEY=...   python code/refresh_media_cache.py                      # qwen/qwen3.8-27b
+GEMINI_API_KEY=... python code/refresh_media_cache.py --provider gemini  # gemini-3.8-flash
 ```
 
-| Measurement | Value |
-| --- | --- |
-| Requests processed | 518 |
-| Output rows written | 518 (`./output.csv`) |
-| Evidence manifest entries | 94 (93 files with records; `evidence_90` is empty) |
-| Normalised evidence records | 2 932 |
-| Steps generated | 2 843 |
-| Average steps per request | 5.49 |
-| Wall-clock runtime | **6.277 s** (final source run) |
-| Average runtime per request | **~12.1 ms** |
-| Memory / token cost per request | not applicable (no model; no per-request network work) |
-| Exit code | 0 |
-
-Status distribution: INCOMPLETE 434, COMPLETE 74, NOT_APPLICABLE 10.
-The output is 566 590 bytes with deterministic LF line endings and SHA-256
-`92b2ef07718bc2c3acf414e7ebb413e4102b37233af5182bf5325ecd5dfbad46`.
-
-### Controlled Gemini extraction experiment (development only)
-
-| Provider | Model | Successful calls | Failed calls | Prompt tokens | Output tokens | Reasoning tokens | Total tokens |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Google | `gemini-3.8-flash` | 13 | 1 (HTTP 503, retried) | 18,075 | 9,502 | 33,458 | **61,035** |
-
-Thirteen successful calls comprised 11 screenshot extractions for the media
-cache plus two exploratory smoke calls. The experiment sent only the selected
-local PNG files; no dataset archive, `log.txt`, API key, or credential was
-uploaded. The final offline run above uses the validated cache and makes
-**0 model calls / 0 tokens**. The SDK did not expose a configured price table;
-no cost estimate is asserted for the experiment. Per successful experiment
-call, the average was 4,695 total tokens.
-
-## 3. Verification runs
-
-| Command | Result |
-| --- | --- |
-| `python -X utf8 -m pytest code/tests -q` | **202 passed, 1 skipped** (the opt-in live Gemini smoke test is skipped by default), exit 0 |
-| `python -X utf8 code/evaluation/main.py` | 0 contract errors; sample status accuracy 25/32; exact cases 12/32; step TP/FP/FN 156/10/37; precision 0.939759, recall 0.808290, F1 0.869081 |
-| `python -X utf8 code/main.py` (repeat) | byte-identical `output.csv` (deterministic) |
-
-## 4. Environment
-
-- Python 3.14.7, Windows 10 (10.0.19045)
-- `pypdf` 6.21.2 (PDF evidence extraction)
-- `pydantic` 2.13.5 and `google-genai` 1.75.0 (optional live Gemini refresh; not used by the final offline run)
-- `pytest` 9.1.1 (tests only; declared in `requirements.txt`)
-- Standard library for everything else (csv, json, sqlite3, re, dataclasses)
-
-The final offline run has no model calls, so its provider cost is exactly
-$0.00 for both the full run and per request. The separate Gemini experiment
-used the token counts above; no pricing estimate is claimed.
+Keys are read from the environment only. Each image is one call of about 2,000
+input tokens. Groq's free tier allows 1,000 output tokens per minute, so the
+refresh paces itself and retries after 65 seconds on HTTP 429. Re-verify the
+transcribed identifiers against the screenshots before replacing the cache.

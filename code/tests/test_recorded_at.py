@@ -157,7 +157,9 @@ def test_post_audit_reappearance_does_not_change_audit_answer(dataset_bundle):
     assert status == "COMPLETE"
     account = next(step for step in steps if step.resource_id == "account_8892")
     assert account.operation == "VERIFY_RECORD_ABSENT"
-    assert account.evidence_id == "evidence_31"
+    # evidence_31 was published after audit_at, so it cannot be cited; the
+    # in-time scoped inventory proves the absence instead.
+    assert account.evidence_id == "evidence_72"
 
     later = [
         record
@@ -169,56 +171,24 @@ def test_post_audit_reappearance_does_not_change_audit_answer(dataset_bundle):
     assert later and all(record.state == "PRESENT" for record in later)
 
 
-def test_exact_at_audit_redaction_supersedes_earlier_log(dataset_bundle):
+@pytest.mark.parametrize("case_id,resource_id", [
+    ("case_484", "support_7973"),
+    ("case_342", "support_3399"),
+    ("case_234", "support_1254"),
+])
+def test_identifiable_support_lookup_is_exposed_pii(dataset_bundle, case_id, resource_id):
     datasets, corpus = dataset_bundle
-    request, status, steps = _run_case(datasets, corpus, "case_484")
-
-    assert status == "COMPLETE"
-    assert all(step.phase == "VERIFICATION" for step in steps)
-    support = next(step for step in steps if step.resource_id == "support_7973")
-    assert support.operation == "VERIFY_RECORD_REDACTED"
-    assert support.state == "REDACTED"
-    assert support.evidence_id == "evidence_45"
-
-    exact = [
-        record
-        for record in corpus.records
-        if record.evidence_id == "evidence_45"
-        and record.resource_id == "support_7973"
-    ]
-    assert len(exact) == 1
-    assert exact[0].captured_at == request.audit_at
+    _, status, steps = _run_case(datasets, corpus, case_id)
+    assert status == "INCOMPLETE"
+    finding = next(s for s in steps if s.resource_id == resource_id and s.phase == "FINDING")
+    assert finding.operation == "REPORT_EXPOSED_PII"
+    assert finding.evidence_id
 
 
-def test_exact_at_audit_account_verification_is_complete(dataset_bundle):
-    datasets, corpus = dataset_bundle
-    request, status, steps = _run_case(datasets, corpus, "case_342")
-
-    assert status == "COMPLETE"
-    assert all(step.phase == "VERIFICATION" for step in steps)
-    account = next(step for step in steps if step.resource_id == "account_614")
-    assert account.operation == "VERIFY_RECORD_ABSENT"
-    assert account.evidence_id == "evidence_31"
-    assert account.state == "ABSENT"
-
-
-def test_recorded_at_adds_future_checks_without_false_finding(dataset_bundle):
+def test_state_known_only_from_late_file_is_a_future_check(dataset_bundle):
     datasets, corpus = dataset_bundle
     _, status, steps = _run_case(datasets, corpus, "case_234")
-
-    assert status == "INCOMPLETE"
-    assert not any(
-        step.phase == "FINDING" and step.resource_id == "support_1254"
-        for step in steps
-    )
-    account_check = next(
-        step for step in steps if step.resource_id == "account_2614"
-    )
+    account_check = next(step for step in steps if step.resource_id == "account_2614")
     assert account_check.phase == "VERIFICATION"
     assert account_check.operation == "VERIFY_RECORD_ABSENT"
     assert account_check.evidence_id == ""
-    support_check = next(
-        step for step in steps if step.resource_id == "support_1254"
-    )
-    assert support_check.operation == "VERIFY_RECORD_REDACTED"
-    assert support_check.state == "REDACTED"

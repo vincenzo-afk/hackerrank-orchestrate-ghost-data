@@ -1,0 +1,947 @@
+{
+  "version": "image-observations-v2",
+  "provider": "groq",
+  "model": "qwen/qwen3.8-27b",
+  "prompt_version": "image-v2",
+  "usage_totals": {
+    "calls": 9,
+    "prompt_token_count": 22451,
+    "candidates_token_count": 9524,
+    "thoughts_token_count": 0,
+    "total_token_count": 31975
+  },
+  "images": {
+    "evidence_04": {
+      "file_path": "evidence/images/account_admin_console_20260926.png",
+      "sha256": "d5c32ca5b6e1a2b4bbe9f5d41835ef1fd5d4f7061dab9067a4f9f88cea3c1861",
+      "origin": "account_admin_portal",
+      "captured_at": "2026-09-26T11:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 929,
+        "total_token_count": 2970
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "user_11",
+            "account_5762",
+            "ORD-20265762",
+            "ORD-20265518",
+            "CS-8538",
+            "support_9538"
+          ],
+          "visible_aliases": [
+            "Silver"
+          ],
+          "identifiers": {
+            "emails": [
+              "haruka.s1838@zoho.com"
+            ],
+            "phones": [
+              "+81 90 7610 2507"
+            ],
+            "user_ids": [
+              "user_11"
+            ],
+            "names": [
+              "Haruka Sato"
+            ]
+          },
+          "visible_timestamps": [
+            "24 Sep 2026 09:14 JST",
+            "12 Sep 2026",
+            "28 Aug 2026",
+            "12 Jan 2024",
+            "24 Sep",
+            "22 Sep",
+            "18 Sep",
+            "03 Sep",
+            "28 Aug"
+          ],
+          "record_type": "Customer Operations",
+          "visible_controls": {
+            "Silver": "Silver",
+            "Preferred language": "Japanese",
+            "Last contact": "24 Sep 2026 09:14 JST",
+            "Sign up channel": "mobile_app",
+            "Market": "JP",
+            "Default address": "2-18-4 Kichijoji, Musashino, Tokyo 180-0004",
+            "Loyalty tier": "Silver",
+            "Support": "CS-8538 · support_9538",
+            "Member since": "12 Jan 2024",
+            "Status (ORD-20265762)": "Delivered · 18 Sep",
+            "Status (ORD-20265518)": "Returned · 03 Sep"
+          },
+          "visible_text": "Northstar Shop / Customer Operations / Customers\nHaruka Sato\nSilver\nuser_11 · account_5762\nEmail\nharuka.s1838@zoho.com\nPhone\n+81 90 7610 2507\nSign up channel\nmobile_app\nMarket\nJP\nPreferred language\nJapanese\nLast contact\n24 Sep 2026 09:14 JST\nOverview\nOrder ID\nDate\n1\nORD-20265762\n12 Sep 2026\n2\nORD-20265518\n28 Aug 2026\nItem\nQty\nTotal\nStatus\nCeramic coffee set\n1\nJPY 8,900\nDelivered · 18 Sep\nTravel backpack\n1\nJPY 12,400\nReturned · 03 Sep\nCustomer details\nDefault address\n2-18-4 Kichijoji, Musashino, Tokyo 180-0004\nLoyalty tier\nSilver\nSupport\nCS-8538 · support_9538\nMember since\n12 Jan 2024\nActivity\n24 Sep\nCustomer replied to CS-8538\n22 Sep\nSupport agent responded\n18 Sep\nOrder ORD-20265762 delivered\n03 Sep\nOrder ORD-20265518 returned\n28 Aug\nsupport_9538 created",
+          "confidence": "high",
+          "limitations": "Some text is cut off at the edges of the provided image crops (e.g., the full phone number is only visible in the first crop, the full status text for the second order is only visible in the first crop)."
+        }
+      ]
+    },
+    "evidence_09": {
+      "file_path": "evidence/images/search_index_inspector_20260901.png",
+      "sha256": "75afdb0ae53a4510c83399a70d88073cb4fb2747454095756e4ddad1a8c70605",
+      "origin": "search_index_admin",
+      "captured_at": "2026-09-01T06:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 752,
+        "total_token_count": 2793
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "search_428"
+          ],
+          "visible_aliases": [
+            "customer_directory_v3"
+          ],
+          "identifiers": {
+            "emails": [
+              "g.silva76@gmail.com"
+            ],
+            "phones": [],
+            "user_ids": [
+              "user_13"
+            ],
+            "names": [
+              "Gabriel Silva"
+            ]
+          },
+          "visible_timestamps": [
+            "01 Sep 2026 06:00:14 UTC",
+            "2026-09-01T05:58:21Z",
+            "06:00:14",
+            "05:42:03",
+            "05:31:18"
+          ],
+          "record_type": "Customer Search",
+          "visible_controls": {
+            "Environment": "prod-eu",
+            "Results": "2 hits",
+            "Score": "9.84"
+          },
+          "visible_text": "Customer Search, customer_directory_v3 · prod-eu, Results (2), Gabriel Silva, g.silva76@gmail.com, user_13, 9.84, 01 Sep 2026 06:00:14 UTC, Raw document · search_428, _index customer_directory_v3, _id search_428, display_name Gabriel Silva, email g.silva76@gmail.com, customer_reference user_13, indexed_at 2026-09-01T05:58:21Z, Activity, 06:00:14 email:g.silva76@gmail.com · 2 hits, 05:42:03 customer_reference:user_9842 · 1 hit, 05:31:18 display_name:\"Aditi Jain\" · 1 hit",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "search_1874"
+          ],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [
+              "g.silva76@gmail.com"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "05:58:21 UTC",
+            "05:55:03 UTC"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Score": "4.12",
+            "Customer reference": "—"
+          },
+          "visible_text": "search_1874, —, g.silva76@gmail.com, —, 4.12, 05:58:21 UTC, 05:55:03 UTC",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    },
+    "evidence_14": {
+      "file_path": "evidence/images/connector_management_console_20260807.png",
+      "sha256": "e81fabc93ea1b5f4c918d934cdb2bea05d61737adfcc29f281494f5d8ec46355",
+      "origin": "integration_admin",
+      "captured_at": "2026-08-07T08:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 860,
+        "total_token_count": 2901
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "data_flow_1121"
+          ],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [
+              "jain.aditi@gmail.com"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": [
+              "Data Platform"
+            ]
+          },
+          "visible_timestamps": [
+            "07:59:42",
+            "07:58:10",
+            "07:56:44",
+            "07:55:02"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Status": "Healthy",
+            "Sync mode": "Continuous sync"
+          },
+          "visible_text": "data_flow_1121\nStatus: Healthy\nOwner: Data Platform\nDestination: customer_analytics_warehouse\nSelector: jain.aditi@gmail.com\nSync mode: Continuous sync\nLast response: 200 OK · 1.8 s\nActivity\n07:59:42 124 events delivered\n07:58:10 checkpoint committed\n07:56:44 18 events retried\n07:55:02 destination acknowledged batch",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "data_flow_9846"
+          ],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [
+              "lucia-torres@gmail.com"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "07:59:36"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Mode": "Continuous"
+          },
+          "visible_text": "data_flow_9846\ncustomer_analytics_warehouse\nlucia-torres@gmail.com\nContinuous\n842\n07:59:36",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [],
+            "names": [
+              "Order notifications"
+            ]
+          },
+          "visible_timestamps": [
+            "07:59:28"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Mode": "Continuous"
+          },
+          "visible_text": "Order notifications\nnotification_service\norder events\nContinuous\n650\n07:59:28",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [],
+            "names": [
+              "Delivery tracking"
+            ]
+          },
+          "visible_timestamps": [
+            "07:59:13"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Mode": "Continuous"
+          },
+          "visible_text": "Delivery tracking\nlogistics_warehouse\nshipment events\nContinuous\n420\n07:59:13",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    },
+    "evidence_19": {
+      "file_path": "evidence/images/analytics_profile_view_20260713.png",
+      "sha256": "4e4cb259bc2010b622b0c53fe5872258f994fefc23452a83bb27473758693484",
+      "origin": "analytics_platform",
+      "captured_at": "2026-07-13T10:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 702,
+        "total_token_count": 2743
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "user_20"
+          ],
+          "visible_aliases": [
+            "analytics_7438"
+          ],
+          "identifiers": {
+            "emails": [
+              "darwish.omar@icloud.com"
+            ],
+            "phones": [],
+            "user_ids": [
+              "user_20"
+            ],
+            "names": [
+              "Omar Darwish"
+            ]
+          },
+          "visible_timestamps": [
+            "14:22",
+            "14:20",
+            "14:17",
+            "14:16",
+            "14:12",
+            "13 Jul 2026 14:22 UTC",
+            "21 Apr 2026 09:14 UTC",
+            "13 Jul",
+            "08 Jul",
+            "30 Jun",
+            "22 Jun"
+          ],
+          "record_type": "Users",
+          "visible_controls": {},
+          "visible_text": "Northstar Shop / Pulse Analytics / Users\nOmar Darwish\nuser_20 · analytics_7438 · darwish.omar@icloud.com\nLast 90 days\nSessions 12\nProducts viewed (19)\nCompleted orders 2\nRevenue USD 167.42\nMobile / Desktop 67% / 33%\nAcquisition Organic search\nEvent timeline\nTime Event Product / detail Value Device\n1 14:22 Order completed Ceramic coffee set USD 84.21 Mobile\n2 14:20 Checkout started 2 items USD 84.21 Mobile\n3 14:17 Product viewed Ceramic coffee set — Mobile\n4 14:16 Added to cart Ceramic coffee set USD 42.00 Mobile\n5 14:12 Product viewed Stoneware mug USD 18.00 Desktop\nProfile attributes\nMarket AE\nAudience Returning shopper\nInterest Coffee & dining\nLast activity 13 Jul 2026 14:22 UTC\nFirst seen 21 Apr 2026 09:14 UTC\nActivity\n13 Jul 0 events in active session\n08 Jul Order completed - USD 83.21\n30 Jun Product search - coffee set\n22 Jun Campaign opened\nUpdated moments ago · 5 records",
+          "confidence": "high",
+          "limitations": "Some text is cut off at the edges of the provided image crops (e.g., top right corner, bottom of activity list)."
+        }
+      ]
+    },
+    "evidence_23": {
+      "file_path": "evidence/images/customer_export_console_20260618.png",
+      "sha256": "18b95c1bd8b8956e40216df935498a9f3c181ea2a69b5cd6d3c0841a816d5557",
+      "origin": "export_service",
+      "captured_at": "2026-06-18T12:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 921,
+        "total_token_count": 2962
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "export_1261"
+          ],
+          "visible_aliases": [
+            "customer_export_1261.zip"
+          ],
+          "identifiers": {
+            "emails": [
+              "marcus.lee@northstar.shop"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "20 Jun 14:18 UTC"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Status": "Collecting"
+          },
+          "visible_text": "Export ID: export_1261, Filename: customer_export_1261.zip, Owner: marcus.lee@northstar.shop, Status: Collecting, Created: 20 Jun 14:18 UTC",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "export_1260"
+          ],
+          "visible_aliases": [
+            "customer_export_1260.zip"
+          ],
+          "identifiers": {
+            "emails": [
+              "ingrid.dahl@outlook.com"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "18 Jun 06:42 UTC"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Status": "Ready"
+          },
+          "visible_text": "Export ID: export_1260, Filename: customer_export_1260.zip, Owner: ingrid.dahl@outlook.com, Status: Ready, Created: 18 Jun 06:42 UTC",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "export_1259"
+          ],
+          "visible_aliases": [
+            "customer_export_1259.zip"
+          ],
+          "identifiers": {
+            "emails": [
+              "sara.kim@northstar.shop"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "17 Jun 11:03 UTC"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Status": "Packaging"
+          },
+          "visible_text": "Export ID: export_1259, Filename: customer_export_1259.zip, Owner: sara.kim@northstar.shop, Status: Packaging, Created: 17 Jun 11:03 UTC",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "export_1258"
+          ],
+          "visible_aliases": [
+            "customer_export_1258.zip"
+          ],
+          "identifiers": {
+            "emails": [
+              "daniel.park@northstar.shop"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "16 Jun 09:27 UTC"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Status": "Ready"
+          },
+          "visible_text": "Export ID: export_1258, Filename: customer_export_1258.zip, Owner: daniel.park@northstar.shop, Status: Ready, Created: 16 Jun 09:27 UTC",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    },
+    "evidence_28": {
+      "file_path": "evidence/images/support_ticket_console_20260524.png",
+      "sha256": "542b7aec17e6b2f38827896e7eb52c70e4bfaaca22433621be1f80f54884e944",
+      "origin": "support_platform",
+      "captured_at": "2026-05-24T07:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 698,
+        "total_token_count": 2739
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "CS-5034",
+            "support_1034",
+            "ORD-20265034",
+            "SWF-884103"
+          ],
+          "visible_aliases": [
+            "CS-5034",
+            "support_1034",
+            "ORD-20265034"
+          ],
+          "identifiers": {
+            "emails": [
+              "kagayeman8947@fastmail.com"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": [
+              "Kofi Agyeman",
+              "Maya Chen",
+              "Northstar Bot"
+            ]
+          },
+          "visible_timestamps": [
+            "09:12",
+            "09:13",
+            "09:28",
+            "09:35",
+            "22 May",
+            "23 May",
+            "24 May 07:46",
+            "24 May 08:15",
+            "26 May",
+            "26 May 2026",
+            "2026.10.4"
+          ],
+          "record_type": "Normal priority",
+          "visible_controls": {
+            "SLA": "01:42",
+            "Status": "In transit"
+          },
+          "visible_text": "CS-5034 · Where is my delivery? support_1034 · Kofi Agyeman · Normal priority SLA 01:42 Customer Kofi Agyeman Email kagayeman8947@fastmail.com Assigned Maya Chen Tags Delivery · Tracking · Order update Order ORD-20265034 Product Running shoes Status In transit Carrier SwiftShip Tracking SWF-884103 Expected 26 May 2026 Assigned agent Maya Chen Activity 22 May Order confirmed 23 May Dispatched 24 May 07:46 Reached regional hub 24 May 08:15 In transit 26 May Delivery expected Updated moments ago · 4 records 1 09:12 Kofi Agyeman Could you let me know where my order is and when it is expected to arrive? 2 09:13 Northstar Bot We received your message and are checking the order details. 3 09:28 Maya Chen The parcel reached the regional hub and is on track for delivery on 26 May. 4 09:35 Kofi Agyeman Thanks for the update. Northstar Shop Helpline Console Production Help HC Filter Export Actions Inbox My tickets Assigned to me Mentions Customer search Knowledge base Reports Helpline Console Production workspace build 2026.10.4",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    },
+    "evidence_32": {
+      "file_path": "evidence/images/backup_restore_console_20260429.png",
+      "sha256": "2c246aa5843bec609b9ddfdf1154cd81e0fd61996f83954735e9856e48c18bf3",
+      "origin": "backup_service",
+      "captured_at": "2026-04-29T09:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 928,
+        "total_token_count": 2969
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "backup_9287"
+          ],
+          "visible_aliases": [
+            "s3://northstar-backups/customer-platform/weekly/segment-42-20260426.tar.zst"
+          ],
+          "identifiers": {
+            "emails": [
+              "areed1433@gmail.com"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "26 Apr 2026 02:00 UTC"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Checksum": "Verified",
+            "Encryption": "AES-256"
+          },
+          "visible_text": "backup_9287\nAccount areed1433@gmail.com\nPath s3://northstar-backups/customer-platform/weekly/segment-42-20260426.tar.zst\nRegion eu-west-1\nCreated 26 Apr 2026 02:00 UTC\nEncryption AES-256\nChecksum Verified",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "backup_9286"
+          ],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [
+              "summit-retail@company.co"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "26 Apr 02:00"
+          ],
+          "record_type": "Archive",
+          "visible_controls": {
+            "Encryption": "AES-256"
+          },
+          "visible_text": "backup_9286\nsummit-retail@company.co\nus-east-1\n26 Apr 02:00\n91.4 GB\nAES-256\nArchive",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "backup_9288"
+          ],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [
+              "miller.logistics@company.co"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "26 Apr 02:00"
+          ],
+          "record_type": "Archive",
+          "visible_controls": {
+            "Encryption": "AES-256"
+          },
+          "visible_text": "backup_9288\nmiller.logistics@company.co\nus-west-2\n26 Apr 02:00\n67.1 GB\nAES-256\nArchive",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "backup_9291"
+          ],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [
+              "bluepeako@outlook.com"
+            ],
+            "phones": [],
+            "user_ids": [],
+            "names": []
+          },
+          "visible_timestamps": [
+            "26 Apr 02:00"
+          ],
+          "record_type": "Archive",
+          "visible_controls": {
+            "Encryption": "AES-256"
+          },
+          "visible_text": "backup_9291\nbluepeako@outlook.com\nap-southeast-1\n26 Apr 02:00\n102.3 GB\nAES-256\nArchive",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    },
+    "evidence_37": {
+      "file_path": "evidence/images/security_audit_explorer_20260905.png",
+      "sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b",
+      "origin": "security_service",
+      "captured_at": "2026-09-05T07:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 1447,
+        "total_token_count": 3488
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "audit_record_003"
+          ],
+          "visible_aliases": [
+            "audit_record_003"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "user_03"
+            ],
+            "names": []
+          },
+          "visible_timestamps": [
+            "25 Aug 04:03",
+            "2026-08-25T04:03:00Z"
+          ],
+          "record_type": "Raw event",
+          "visible_controls": {
+            "signature": "Valid"
+          },
+          "visible_text": "audit_record_003 · Raw event\nevent_type: account_closure_recorded\nsubject: user_03\nactor: automated account workflow\nrecorded_at: 2026-08-25T04:03:00Z\nfingerprint: 8f0c...31ad\nsignature: Valid\njournal: 2026-Q3\n\nTime (UTC): 25 Aug 04:03\nEvent: Account closure recorded\nCategory: Account lifecycle\nSubject: user_03\nActor: Automated workflow\nIntegrity: Valid\nReference: audit_record_003",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "audit_record_002"
+          ],
+          "visible_aliases": [
+            "audit_record_002"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "user_03"
+            ],
+            "names": []
+          },
+          "visible_timestamps": [
+            "25 Aug 03:21"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Integrity": "Valid"
+          },
+          "visible_text": "Time (UTC): 25 Aug 03:21\nEvent: Session revoked\nCategory: Session management\nSubject: user_03\nActor: Security system\nIntegrity: Valid\nReference: audit_record_002",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "audit_record_001"
+          ],
+          "visible_aliases": [
+            "audit_record_001"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "user_03"
+            ],
+            "names": []
+          },
+          "visible_timestamps": [
+            "24 Aug 16:14"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Integrity": "Valid"
+          },
+          "visible_text": "Time (UTC): 24 Aug 16:14\nEvent: Recovery challenge completed\nCategory: Authentication\nSubject: user_03\nActor: User (self)\nIntegrity: Valid\nReference: audit_record_001",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "audit_record_006"
+          ],
+          "visible_aliases": [
+            "audit_record_006"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "user_03"
+            ],
+            "names": []
+          },
+          "visible_timestamps": [
+            "22 Aug 11:27"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Integrity": "Valid"
+          },
+          "visible_text": "Time (UTC): 22 Aug 11:27\nEvent: Email change confirmed\nCategory: Profile update\nSubject: user_03\nActor: User (self)\nIntegrity: Valid\nReference: audit_record_006",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "audit_record_005"
+          ],
+          "visible_aliases": [
+            "audit_record_005"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "user_03"
+            ],
+            "names": []
+          },
+          "visible_timestamps": [
+            "20 Aug 09:42"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Integrity": "Valid"
+          },
+          "visible_text": "Time (UTC): 20 Aug 09:42\nEvent: Login from new device\nCategory: Authentication\nSubject: user_03\nActor: User (self)\nIntegrity: Valid\nReference: audit_record_005",
+          "confidence": 1.0,
+          "limitations": []
+        },
+        {
+          "visible_resource_ids": [
+            "audit_record_004"
+          ],
+          "visible_aliases": [
+            "audit_record_004"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "user_03"
+            ],
+            "names": []
+          },
+          "visible_timestamps": [
+            "18 Aug 14:05"
+          ],
+          "record_type": null,
+          "visible_controls": {
+            "Integrity": "Valid"
+          },
+          "visible_text": "Time (UTC): 18 Aug 14:05\nEvent: Password changed\nCategory: Authentication\nSubject: user_03\nActor: User (self)\nIntegrity: Valid\nReference: audit_record_004",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    },
+    "evidence_42": {
+      "file_path": "evidence/images/deleted_account_reference_20260310.png",
+      "sha256": "68c28a72afd6ed184d5990d15c543f8a516face204f0360f732755a8a63c28be",
+      "origin": "identity_service",
+      "captured_at": "2026-03-10T06:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 760,
+        "total_token_count": 2801
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "user_17"
+          ],
+          "visible_aliases": [
+            "ORD-20263245",
+            "CS-3245",
+            "CS-3378",
+            "FIN-7742"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "user_17"
+            ],
+            "names": []
+          },
+          "visible_timestamps": [
+            "11 Jan 2024 08:42 UTC",
+            "10 Mar 2026 07:18 UTC",
+            "11 Jan 2024 08:45",
+            "14 Feb 2024 12:16",
+            "03 Jun 2024 09:27",
+            "22 Aug 2024 15:03",
+            "10 Mar 2026",
+            "22 Aug 2024",
+            "03 Jun 2024",
+            "14 Feb 2024",
+            "11 Jan 2024"
+          ],
+          "record_type": "Customer key",
+          "visible_controls": {
+            "Retained reference": "Retained reference",
+            "Status": "Active"
+          },
+          "visible_text": "Northstar Shop / Customer Reference Registry / Customer reference\nuser_17\nCustomer key · Account Platform · eu-west\nRetained reference\nReference type\nCustomer key\nCreated\n11 Jan 2024 08:42 UTC\nMost recent update\n10 Mar 2026 07:18 UTC\nOwner team\nAccount Platform\nUpdated moments ago · 4 records\nSystem Record reference Relationship Created (UTC) Status\n1 Orders ORD-20263245 Linked to customer 11 Jan 2024 08:45 Active\n2 Support CS-3245 Linked to customer 14 Feb 2024 12:16 Active\n3 Support CS-3378 Linked to customer 03 Jun 2024 09:27 Active\n4 Finance FIN-7742 Linked to customer 22 Aug 2024 15:03 Active\nHistory\n10 Mar 2026 Metadata reviewed\n22 Aug 2024 Finance link added\n03 Jun 2024 Support link added\n14 Feb 2024 Support link added\n11 Jan 2024 Reference created\nActivity\nReference created\nRecorded\nOrder link added\nORD-20263245\nSupport links added\nCS-3245, CS-3378\nFinance link added\nFIN-7742\nMetadata reviewed\nRecorded",
+          "confidence": "high",
+          "limitations": [
+            "Some text is cut off at the edges of the provided image crops (e.g., 'Retained reference' badge, 'Most recent update' timestamp, 'Reference created' activity entry)."
+          ]
+        }
+      ]
+    },
+    "evidence_46": {
+      "file_path": "evidence/images/object_storage_browser_20260213.png",
+      "sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+      "origin": "object_storage",
+      "captured_at": "2026-02-13T08:00:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 1003,
+        "total_token_count": 3044
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "northstar-customer-data"
+          ],
+          "visible_aliases": [
+            "delivery_confirmation_19.pdf",
+            "delivery_confirmation_20.pdf",
+            "return_label_4821.pdf",
+            "return_label_4876.pdf",
+            "invoice_NS-10493.pdf",
+            "parcel_damage_7713.jpg",
+            "customer_export_2026-02-10.zip",
+            "customer_export_2026-02-12.zip"
+          ],
+          "identifiers": {
+            "emails": [],
+            "phones": [],
+            "user_ids": [
+              "support-service"
+            ],
+            "names": [
+              "Northstar Shop",
+              "Nimbus Object Storage",
+              "Northstar Production"
+            ]
+          },
+          "visible_timestamps": [
+            "13 Feb 2026 08:00 UTC",
+            "12 Feb 18:42",
+            "11 Feb 14:17",
+            "10 Feb 09:33",
+            "11 Feb 16:05",
+            "10 Feb 11:21",
+            "12 Feb 10:08",
+            "10 Feb 23:14",
+            "12 Feb 21:56",
+            "12 Feb 2026 18:42 UTC",
+            "12 Feb 18:42",
+            "12 Feb 18:39",
+            "12 Feb 18:38"
+          ],
+          "record_type": "Objects",
+          "visible_controls": {
+            "Storage class": "All",
+            "Region": "eu-west-1",
+            "Captured": "13 Feb 2026 08:00 UTC",
+            "Encryption": "AES-256",
+            "Content type": "application/pdf",
+            "Version": "v3"
+          },
+          "visible_text": "Northstar Shop / Nimbus Object Storage / northstar-customer-data\nnorthstar-customer-data\n8 objects\neu-west-1 / support-attachments / 2026 / 02\nObjects\nVersions\nAccess\nAccount\nNorthstar Production\nRegion\neu-west-1\nCaptured\n13 Feb 2026 08:00 UTC\nStorage class\nAll\nObjects\nName\ndelivery_confirmation_19.pdf\ndelivery_confirmation_20.pdf\nreturn_label_4821.pdf\nreturn_label_4876.pdf\ninvoice_NS-10493.pdf\nparcel_damage_7713.jpg\ncustomer_export_2026-02-10.zip\ncustomer_export_2026-02-12.zip\nSize\nModified (UTC)\nStorage class\n684 KB\n12 Feb 18:42\nStandard\n712 KB\n11 Feb 14:17\nStandard\n203 KB\n10 Feb 09:33\nStandard\n198 KB\n11 Feb 16:05\nStandard\n318 KB\n10 Feb 11:21\nStandard\n2.4 MB\n12 Feb 10:08\nStandard\n128 MB\n10 Feb 23:14\nStandard\n131 MB\n12 Feb 21:56\nStandard\nUpdated moments ago · 8 records\nVersion\ndelivery_confirmation_19.pdf\nSize\n684 KB\nVersion\nv3\nContent type\napplication/pdf\nEncryption\nAES-256\nChecksum\ne71b6d...\nUploader\nsupport-service\nModified\n12 Feb 2026 18:42 UTC\nActivity\nv3\n12 Feb 18:42 · metadata update\nv2\n12 Feb 18:39 · upload complete\nv1\n12 Feb 18:38 · object created\nNimbus Object Storage\nProduction workspace\nbuild 2026.10.4",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    },
+    "evidence_60": {
+      "file_path": "evidence/images/marketing_profile_console.png",
+      "sha256": "51fa0e6a38f8fa3629ba1b0d0b90b4ed139715956b97bfd09a6f1a6232c15df5",
+      "origin": "marketing_platform",
+      "captured_at": "2026-09-16T07:20:00Z",
+      "usage": {
+        "prompt_token_count": 2041,
+        "candidates_token_count": 524,
+        "total_token_count": 2565
+      },
+      "observations": [
+        {
+          "visible_resource_ids": [
+            "marketing_001"
+          ],
+          "visible_aliases": [],
+          "identifiers": {
+            "emails": [
+              "sj.park@naver.com"
+            ],
+            "phones": [
+              "+82-10-5837-9451"
+            ],
+            "user_ids": [],
+            "names": [
+              "Soo-jin Park"
+            ]
+          },
+          "visible_timestamps": [
+            "15 Sep 2026 23:40 UTC",
+            "23:40",
+            "23:38",
+            "23:35",
+            "23:32"
+          ],
+          "record_type": "Audience Operations",
+          "visible_controls": {
+            "Live": "Live",
+            "SMS opt-in": "No",
+            "Email opt-in": "Yes"
+          },
+          "visible_text": "Northstar Shop / Audience Operations / Audie\nSoo-jin Park\nmarketing_001 · sj.park@naver.com · +82-10-5837-9451\nLive\nMarket\nSouth Korea\nLanguage\nKorean\nEmail opt-in\nYes\nSMS opt-in\nNo\nLast refreshed\n15 Sep 2026 23:40 UTC\nProfile\nUpdated moments ago · 4 records\nTime Activity Detail\n1 23:40 Product-category update Desk accessories · Drinkware\n2 23:38 Campaign eligibility check Autumn offers · Eligible\n3 23:35 Profile refresh Live profile fields updated\n4 23:32 Audience evaluation Returning customers — East Asia\nAudience membership\nAudience Returning customers — East Asia\nSegments Repeat customer · Home & lifestyle · Mobile shopper\nPreferred categories Desk accessories · Drinkware\nLast campaign Autumn offers\nOpen rate 32.4%\nClick rate 6.8%\nActivity\nAutumn offers\n32.4% open rate\nHome & Lifestyle Picks\n28.7% open rate\nProfile refreshed from live data\nRecorded",
+          "confidence": 1.0,
+          "limitations": []
+        }
+      ]
+    }
+  }
+}

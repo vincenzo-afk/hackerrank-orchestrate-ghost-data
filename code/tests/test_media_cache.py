@@ -76,7 +76,7 @@ def test_missing_media_cache_blocks_the_pipeline(monkeypatch, tmp_path):
 
 def test_image_observations_are_normalized_into_the_corpus():
     corpus = load_evidence_corpus(REPO_ROOT / "dataset")
-    image_records = [r for r in corpus.records if r.evidence_id.startswith("evidence_") and r.provenance.startswith("gemini:")]
+    image_records = [r for r in corpus.records if r.evidence_id.startswith("evidence_") and r.provenance.startswith("media_cache:")]
     assert image_records
     evidence_37 = [r for r in corpus.records if r.evidence_id == "evidence_37"]
     assert {r.resource_id for r in evidence_37} == {
@@ -89,7 +89,9 @@ def test_image_observations_are_normalized_into_the_corpus():
     }
     assert all(r.data_category == "SECURITY_AUDIT_LOG" for r in evidence_37)
     assert all(r.state == "PRESENT" for r in evidence_37)
-    assert any(r.resource_id == "tombstone_user_17" and r.state == "REDACTED" for r in corpus.records)
+    # The screen prints user_17; the catalog maps that reference to tombstone_17.
+    assert any(r.resource_id == "tombstone_17" and r.state == "REDACTED" for r in corpus.records)
+    assert not any(r.resource_id == "tombstone_user_17" for r in corpus.records)
     assert any(r.resource_id == "support_1034" and r.data_category == "SUPPORT_MESSAGE" for r in corpus.records)
     assert not any(
         r.resource_id == "support_9538" and r.evidence_id == "evidence_04"
@@ -103,9 +105,9 @@ def test_case_45_receives_all_six_visible_audit_verifications():
     request = next(r for r in datasets.deletion_requests if r.case_id == "case_45")
     status, steps, failure = audit_request(request, datasets, corpus)
     assert failure is None
-    # The image evidence contains only retained audit records, not an account
-    # closure record.  It must not be promoted to COMPLETE.
-    assert status == "INCOMPLETE"
+    # No account or other obligation is linked to this subject, and every
+    # retained audit record is visible: there is no separate account gate.
+    assert status == "COMPLETE"
     audit_steps = [s for s in steps if s.resource_id.startswith("audit_record_")]
     assert [s.resource_id for s in audit_steps] == [
         "audit_record_001",
@@ -117,4 +119,4 @@ def test_case_45_receives_all_six_visible_audit_verifications():
     ]
     assert all(s.operation == "VERIFY_RECORD_PRESENT" for s in audit_steps)
     assert all(s.state == "PRESENT" for s in audit_steps)
-    assert all(s.evidence_id == "" for s in audit_steps)
+    assert all(s.evidence_id in ("evidence_37", "evidence_55") for s in audit_steps)

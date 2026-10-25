@@ -1,4 +1,4 @@
-"""Regression tests for the independent output validator."""
+"""Contract validator tests (code/output_validator.py)."""
 
 from __future__ import annotations
 
@@ -10,105 +10,83 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "code"))
 
-from main import load_datasets
-from evidence_parser import load_evidence_corpus
-from evaluation.main import validate_output
+from main import load_datasets, validate_output_rows  # noqa: E402
 
-
-def _load():
-    datasets = load_datasets(REPO_ROOT / "dataset")
-    corpus = load_evidence_corpus(REPO_ROOT / "dataset")
-    return datasets, corpus
+DATASETS = load_datasets(REPO_ROOT / "dataset")
 
 
 def _rows():
-    with open(REPO_ROOT / "output.csv", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    with open(REPO_ROOT / "output.csv", encoding="utf-8") as f:
+        return [(r["case_id"], r["deletion_status"], r["steps_json"]) for r in csv.DictReader(f)]
 
 
-def _write(path, rows):
-    with open(path, "w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle, lineterminator="\n")
-        writer.writerow(["case_id", "deletion_status", "steps_json"])
-        for row in rows:
-            writer.writerow([row["case_id"], row["deletion_status"], row["steps_json"]])
+def _errors(rows):
+    return validate_output_rows(rows, DATASETS.deletion_requests, DATASETS)
+
+
+def _replace(rows, cid, status=None, steps=None):
+    out = []
+    for c, s, j in rows:
+        if c == cid:
+            s = status or s
+            j = json.dumps(steps) if steps is not None else j
+        out.append((c, s, j))
+    return out
+
+
+def _first(rows, status):
+    return next((c, json.loads(j)) for c, s, j in rows if s == status)
 
 
 def test_validator_accepts_current_output():
-    datasets, corpus = _load()
-    _, errors = validate_output(datasets, corpus, output_path=REPO_ROOT / "output.csv")
-    assert errors == []
+    assert _errors(_rows()) == []
 
 
-def test_validator_rejects_complete_without_account_closure(tmp_path):
-    datasets, corpus = _load()
+def test_authorized_empty_plan_is_rejected():
     rows = _rows()
-    target = next(r for r in rows if r["case_id"] == "case_113")
-    steps = [s for s in json.loads(target["steps_json"]) if not s["resource_id"].startswith("account_")]
-    target["steps_json"] = json.dumps(steps, separators=(",", ":"))
-    path = tmp_path / "output.csv"
-    _write(path, rows)
-    _, errors = validate_output(datasets, corpus, output_path=path)
-    assert any("account closure" in error for error in errors)
+    cid, _ = _first(rows, "INCOMPLETE")
+    assert any("empty plan" in e for e in _errors(_replace(rows, cid, steps=[])))
 
 
-def test_validator_rejects_missing_support_category_treatment(tmp_path):
-    datasets, corpus = _load()
+def test_finding_without_remediation_is_rejected():
     rows = _rows()
-    target = next(r for r in rows if r["case_id"] == "case_179")
-    steps = [
-        s for s in json.loads(target["steps_json"])
-        if not (s["resource_id"] == "support_2283" and s["operation"] == "DELETE_RECORD")
-    ]
-    target["steps_json"] = json.dumps(steps, separators=(",", ":"))
-    path = tmp_path / "output.csv"
-    _write(path, rows)
-    _, errors = validate_output(datasets, corpus, output_path=path)
-    assert any("SUPPORT_ATTACHMENT" in error for error in errors)
+    cid, steps = _first(rows, "INCOMPLETE")
+    trimmed = [s for s in steps if s["phase"] != "REMEDIATION"]
+    for i, s in enumerate(trimmed, 1):
+        s["step_no"] = i
+    assert any("lacks its remediation" in e for e in _errors(_replace(rows, cid, steps=trimmed)))
 
 
-def test_validator_rejects_missing_non_support_verification(tmp_path):
-    datasets, corpus = _load()
+def test_complete_with_future_step_is_rejected():
     rows = _rows()
-    target = next(r for r in rows if r["case_id"] == "case_113")
-    steps = [
-        s for s in json.loads(target["steps_json"])
-        if not (s["resource_id"] == "audit_record_1127")
-    ]
-    target["steps_json"] = json.dumps(steps, separators=(",", ":"))
-    path = tmp_path / "output.csv"
-    _write(path, rows)
-    _, errors = validate_output(datasets, corpus, output_path=path)
-    assert any("SECURITY_AUDIT_LOG" in error for error in errors)
+    cid, steps = _first(rows, "COMPLETE")
+    steps[0]["evidence_id"] = ""
+    assert any("without evidence" in e for e in _errors(_replace(rows, cid, steps=steps)))
 
 
-def test_validator_rejects_unsupported_extra_action(tmp_path):
-    datasets, corpus = _load()
+def test_citation_after_audit_is_rejected():
     rows = _rows()
-    target = next(r for r in rows if r["case_id"] == "case_179")
-    steps = json.loads(target["steps_json"])
-    steps.append({
-        "step_no": len(steps) + 1,
-        "phase": "VERIFICATION",
-        "system_id": "support_platform",
-        "resource_id": "support_2283",
-        "operation": "VERIFY_RECORD_ANONYMIZED",
-        "state": "ANONYMIZED",
-        "evidence_id": "",
-    })
-    target["steps_json"] = json.dumps(steps, separators=(",", ":"))
-    path = tmp_path / "output.csv"
-    _write(path, rows)
-    _, errors = validate_output(datasets, corpus, output_path=path)
-    assert any("unsupported VERIFY_RECORD_ANONYMIZED" in error for error in errors)
+    cid, steps = _first(rows, "COMPLETE")
+    steps[0]["evidence_id"] = "evidence_03"  # manifest capture 2026-10-01
+    assert any("later than audit_at" in e for e in _errors(_replace(rows, cid, steps=steps)))
 
 
-def test_validator_rejects_evidence_backed_empty_incomplete(tmp_path):
-    datasets, corpus = _load()
+def test_shared_account_across_cases_is_rejected():
     rows = _rows()
-    target = next(r for r in rows if r["case_id"] == "case_179")
-    target["steps_json"] = "[]"
-    path = tmp_path / "output.csv"
-    _write(path, rows)
-    _, errors = validate_output(datasets, corpus, output_path=path)
-    assert any("INCOMPLETE has evidence but no plan" in error for error in errors)
+    owners = [(c, json.loads(j)) for c, s, j in rows if s == "COMPLETE"]
+    (c1, s1), (c2, s2) = owners[0], owners[1]
+    acct = next(s for s in s1 if s["system_id"] == "account_service")
+    s2 = [s for s in s2 if s["system_id"] != "account_service"] + [dict(acct)]
+    s2.sort(key=lambda s: (["VERIFY_RECORD_ABSENT", "VERIFY_RECORD_PRESENT", "VERIFY_RECORD_REDACTED",
+                            "VERIFY_RECORD_ANONYMIZED", "VERIFY_DATA_FLOW_DISABLED",
+                            "VERIFY_RESTORE_BLOCKED"].index(s["operation"]), s["system_id"], s["resource_id"]))
+    for i, s in enumerate(s2, 1):
+        s["step_no"] = i
+    assert any("several cases" in e for e in _errors(_replace(rows, c2, steps=s2)))
+
+
+def test_non_deletion_with_steps_is_rejected():
+    rows = _rows()
+    cid = next(c for c, s, _ in rows if s == "NOT_APPLICABLE")
+    _, steps = _first(rows, "COMPLETE")
+    assert any("non-deletion" in e for e in _errors(_replace(rows, cid, "COMPLETE", steps)))

@@ -22,8 +22,10 @@ from typing import Optional
 # These modules are required for a production audit.  An import failure must
 # stop the run rather than silently yielding an apparently valid CSV.
 from evidence_parser import load_evidence_corpus, EvidenceCorpus
-from state_reconstruction import reconstruct_case_state, AuditStep
+from state_reconstruction import reconstruct_case_state, case_scope, AuditStep
 from policy_engine import PolicyEngine
+from activity_linker import link_resources
+from output_validator import evidence_time_index, validate_rows
 
 # Reconfigure stdout/stderr to UTF-8 so Japanese/accents print cleanly on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -815,8 +817,41 @@ def _serialize_steps(steps) -> str:
     return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
 
-def audit_request(req, datasets, corpus) -> tuple[str, list, Optional[str]]:
-    """Audit one request. Returns (status, steps, failure_reason)."""
+def authorized_requests(datasets) -> list[tuple[DeletionRequest, IdentityFingerprint]]:
+    """Every sample and evaluation request that authorizes deletion, with its
+    identity as of audit_at.  Unresolved identities are left out here and
+    reported by audit_request."""
+    result = []
+    for req in datasets.sample_requests + datasets.deletion_requests:
+        if not classify_request(req.request_text).get("is_deletion", False):
+            continue
+        fp = resolve_identity(req.email, datasets, as_of=req.audit_at).fingerprint
+        if fp is not None:
+            result.append((req, fp))
+    return result
+
+
+_LINK_CACHE: dict[tuple[int, int], object] = {}
+
+
+def global_links(datasets, corpus):
+    """Run the activity linker once over all requests sharing the corpus.
+
+    Ownership of identifier-free resources is a global one-to-one problem:
+    a deletion-worker event can belong to only one request, so the sample
+    and evaluation requests are resolved together.
+    """
+    key = (id(datasets), id(corpus))
+    if key not in _LINK_CACHE:
+        _LINK_CACHE[key] = link_resources(authorized_requests(datasets), datasets, corpus)
+    return _LINK_CACHE[key]
+
+
+def audit_request(req, datasets, corpus, links=None) -> tuple[str, list, Optional[str]]:
+    """Audit one request. Returns (status, steps, failure_reason).
+
+    ``links`` is the global LinkResult; it is computed on demand when absent.
+    """
     if not classify_request(req.request_text).get("is_deletion", False):
         return "NOT_APPLICABLE", [], None
 
@@ -828,6 +863,8 @@ def audit_request(req, datasets, corpus) -> tuple[str, list, Optional[str]]:
         return "INCOMPLETE", [], "unresolved_identity"
 
     try:
+        if links is None:
+            links = global_links(datasets, corpus)
         result = reconstruct_case_state(
             case_id=req.case_id,
             audit_at=req.audit_at,
@@ -838,13 +875,15 @@ def audit_request(req, datasets, corpus) -> tuple[str, list, Optional[str]]:
             require_evidence=True,
             not_before=req.requested_at,
             policy_engine=datasets.policy,
+            links=links.links.get(req.case_id, []),
         )
     except Exception as exc:
         raise RuntimeError(
             f"{req.case_id}: state reconstruction failed; output was not generated"
         ) from exc
 
-    return result.deletion_status, result.steps, None
+    failure = None if result.steps else "empty_plan"
+    return result.deletion_status, result.steps, failure
 
 
 def _write_output_csv(rows, output_path: Path) -> None:
@@ -855,9 +894,52 @@ def _write_output_csv(rows, output_path: Path) -> None:
             writer.writerow([cid, status, steps_json])
 
 
+def audit_requests(requests, datasets, corpus, links=None):
+    """Audit a list of requests against one global link result.
+
+    Returns (rows, diagnostics, scope): output rows sorted by case_id,
+    per-case explanations for unresolved obligations, and the resources
+    linked to each subject (used to validate citations).
+    """
+    if links is None:
+        links = global_links(datasets, corpus)
+    rows, diagnostics, scope = [], {}, {}
+    for req in requests:
+        status, steps, failure = audit_request(req, datasets, corpus, links)
+        rows.append((req.case_id, status, _serialize_steps(steps)))
+        fp = resolve_identity(req.email, datasets, as_of=req.audit_at).fingerprint
+        notes = [failure] if failure else []
+        mention = re.compile(rf"\b{re.escape(req.case_id)}\b")
+        notes += [d for d in links.diagnostics if mention.search(d)]
+        diagnostics[req.case_id] = notes
+        if fp is not None:
+            scope[req.case_id] = case_scope(
+                fp.all_identifiers, corpus, req.audit_at, links.links.get(req.case_id, [])
+            )
+    rows.sort(key=lambda r: r[0])
+    return rows, diagnostics, scope
+
+
+def validate_output_rows(rows, requests, datasets, diagnostics=None, scope=None) -> list[str]:
+    authorized = {
+        r.case_id for r in requests if classify_request(r.request_text).get("is_deletion", False)
+    }
+    return validate_rows(
+        rows,
+        {r.case_id: r for r in requests},
+        authorized,
+        evidence_time_index(datasets),
+        diagnostics=diagnostics,
+        scope=scope,
+    )
+
+
 def run_full_pipeline(dataset_dir=None, output_path=None) -> Path:
     """Run the deletion audit over every evaluation request and write output.csv.
 
+    Sample and evaluation requests are linked together (a deletion-worker
+    event belongs to exactly one request), then the evaluation subset is
+    audited, validated, and written.  An invalid output is never written.
     Returns the path of the written CSV.
     """
     if dataset_dir is None:
@@ -869,26 +951,20 @@ def run_full_pipeline(dataset_dir=None, output_path=None) -> Path:
 
     datasets = load_datasets(dataset_dir)
     corpus = load_evidence_corpus(dataset_dir)
+    links = global_links(datasets, corpus)
 
-    rows = []
-    unresolved = 0
-    for req in datasets.deletion_requests:
-        status, steps, failure = audit_request(req, datasets, corpus)
-        if failure == "unresolved_identity":
-            unresolved += 1
-
-        rows.append((req.case_id, status, _serialize_steps(steps)))
-
-    rows.sort(key=lambda r: r[0])
+    rows, diagnostics, scope = audit_requests(datasets.deletion_requests, datasets, corpus, links)
+    errors = validate_output_rows(rows, datasets.deletion_requests, datasets, diagnostics, scope)
+    if errors:
+        for err in errors[:50]:
+            print(f"  INVALID: {err}", file=sys.stderr)
+        raise RuntimeError(f"{len(errors)} output contract violations; output.csv was not written")
 
     _write_output_csv(rows, output_path)
 
+    unresolved = sum(1 for notes in diagnostics.values() if "unresolved_identity" in notes)
     if unresolved:
-        print(
-            f"  WARNING: {unresolved} unresolved identities",
-            file=sys.stderr,
-        )
-
+        print(f"  WARNING: {unresolved} unresolved identities", file=sys.stderr)
     return output_path
 
 

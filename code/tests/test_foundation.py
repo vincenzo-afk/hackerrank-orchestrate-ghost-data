@@ -18,6 +18,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import pytest
+from types import SimpleNamespace
 
 # Ensure the repo root is on sys.path so `code.main` can be imported.
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -402,7 +403,7 @@ def test_reconstruction_failure_propagates_and_does_not_become_incomplete(
 
     monkeypatch.setattr(main_module, "reconstruct_case_state", broken_reconstruction)
     with pytest.raises(RuntimeError, match="case_01: state reconstruction failed") as exc:
-        audit_request(request, datasets, object())
+        audit_request(request, datasets, object(), links=SimpleNamespace(links={}, diagnostics=[]))
     assert isinstance(exc.value.__cause__, ValueError)
 
 

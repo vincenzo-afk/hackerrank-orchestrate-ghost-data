@@ -23,20 +23,18 @@ FIXTURE = b"\x89PNG\r\n\x1a\nsynthetic-image-bytes"
 
 VALID = json.dumps({
     "observations": [{
-        "resource_id": "support_9001",
-        "system_id": "support_platform",
-        "data_category": "SUPPORT_MESSAGE",
-        "status": "PRESENT",
+        "visible_resource_ids": ["support_9001"],
+        "visible_aliases": [],
         "identifiers": {
             "emails": ["subject@example.com"],
             "phones": [],
             "user_ids": ["user_test"],
             "names": ["Test Subject"],
         },
-        "subject_reference": "user_test",
-        "shared_context": True,
-        "visible_text": "support_9001 Test Subject subject@example.com user_test",
-        "timestamp_text": "2026-06-05",
+        "visible_timestamps": ["2026-06-05"],
+        "record_type": "Ticket",
+        "visible_controls": {},
+        "visible_text": "Ticket support_9001 Test Subject subject@example.com user_test 2026-06-05",
         "confidence": 0.99,
         "limitations": None,
     }]
@@ -95,7 +93,7 @@ def test_valid_response_and_cache_hit(tmp_path):
     assert first.cached is False
     assert second.cached is True
     assert client.models.calls == 1
-    assert first.observations[0]["resource_id"] == "support_9001"
+    assert first.observations[0]["visible_resource_ids"] == ["support_9001"]
     assert first.usage["total_token_count"] == 15
     assert second.observations == first.observations
     assert list((tmp_path / "cache").glob("*.json"))
@@ -128,10 +126,20 @@ def test_invalid_schema_is_rejected(tmp_path):
         extractor.extract_image(write_image(tmp_path), "evidence_test")
 
 
+def test_model_decided_fields_are_rejected(tmp_path):
+    decided = json.dumps({"observations": [{
+        "visible_text": "support_9001", "visible_resource_ids": ["support_9001"],
+        "data_category": "SUPPORT_MESSAGE", "status": "PRESENT",
+    }]})
+    extractor = GeminiExtractor(client=FakeClient([decided]), cache_dir=tmp_path / "cache")
+    with pytest.raises(GeminiResponseError):
+        extractor.extract_image(write_image(tmp_path), "evidence_test")
+
+
 def test_invented_identifier_is_rejected(tmp_path):
     invented = json.dumps({
         "observations": [{
-            "resource_id": "support_9001",
+            "visible_resource_ids": ["support_9001"],
             "visible_text": "support_9001 visible text",
             "identifiers": {"emails": ["invented@example.com"]},
         }]
@@ -175,4 +183,4 @@ def test_live_gemini_smoke():
     extractor = GeminiExtractor()
     result = extractor.extract_image(image, "evidence_28", use_cache=False)
     assert result.observations
-    assert any(o.get("resource_id") == "support_1034" for o in result.observations)
+    assert any("support_1034" in o.get("visible_resource_ids", []) for o in result.observations)

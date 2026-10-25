@@ -1,24 +1,29 @@
 """
 System-state reconstruction module for Ghost Data Still Exists.
 
-Determines the ground-truth state of each relevant resource at audit_at,
-applies deletion rules, generates findings, remediation, and verification steps.
+Determines the state of every resource in a case's audit scope at audit_at,
+one physical copy at a time, applies deletion_rules.csv, and emits findings,
+remediation and verification steps in canonical order.
+
+A case is COMPLETE only when every in-scope resource has the required
+treatment, proven by admissible evidence.  There is no separate account
+closure gate: the account is an ordinary in-scope resource whose obligation
+is proven, violated, or unresolved like any other.
 """
 
 from __future__ import annotations
 
-import csv
-import re
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any, Iterable, Optional
 
 from evidence_parser import (
     EvidenceCorpus,
     ObservedRecord,
-    _normalize_system_id,
-    _parse_iso,
+    SnapshotCoverage,
+    catalog_links,
+    strong_identifiers,
 )
 from policy_engine import PolicyEngine
 
@@ -54,7 +59,7 @@ _FALSE_CONDITION_VERIFICATIONS = {
     "EMAIL_DELIVERY_LOG": ("REDACTED", "VERIFY_RECORD_REDACTED"),
 }
 
-# Operation ordering defined in problem_statement.md & AGENTS.md §6.4 & §126
+# Operation ordering defined in problem_statement.md & AGENTS.md §6.4
 FINDING_ORDER = [
     "REPORT_REMAINING_RECORD",
     "REPORT_EXPOSED_PII",
@@ -103,9 +108,10 @@ RETAIN_CATEGORIES = {
     "LEGAL_HOLD_RECORD",
 }
 
-# When two observations of the same resource share a capture time, prefer the
-# non-compliant reading so an ambiguous snapshot can never manufacture a
-# COMPLETE verdict.
+# When observations disagree (same capture time, or different physical
+# copies), the non-compliant reading wins so an ambiguous snapshot can never
+# manufacture a COMPLETE verdict.  For retained records PRESENT is also the
+# reading that must survive, so the same order serves every category.
 _STATE_PRIORITY = {
     "PRESENT": 4,
     "ACTIVE": 4,
@@ -114,6 +120,16 @@ _STATE_PRIORITY = {
     "BLOCKED": 2,
     "DISABLED": 2,
     "ABSENT": 1,
+}
+
+# Final state each action must reach, for planning unobserved obligations.
+_FINAL_VERIFICATION = {
+    "DELETE": ("VERIFY_RECORD_ABSENT", "ABSENT"),
+    "REDACT": ("VERIFY_RECORD_REDACTED", "REDACTED"),
+    "ANONYMIZE": ("VERIFY_RECORD_ANONYMIZED", "ANONYMIZED"),
+    "RETAIN": ("VERIFY_RECORD_PRESENT", "PRESENT"),
+    "DATA_FLOW": ("VERIFY_DATA_FLOW_DISABLED", "DISABLED"),
+    "BACKUP": ("VERIFY_RESTORE_BLOCKED", "BLOCKED"),
 }
 
 
@@ -127,33 +143,32 @@ class CaseAuditResult:
     evidence_gaps: list[str] = field(default_factory=list)
 
 
+@dataclass
+class _Scope:
+    """One in-scope resource and how it entered the scope."""
+    system_id: str
+    resource_id: str
+    category_hint: str = ""
+    methods: set = field(default_factory=set)
+    required: bool = False
+    deletion_time: Optional[datetime] = None
+
+
 def _sort_steps(steps: list[AuditStep]) -> list[AuditStep]:
     """Sort steps strictly by Phase -> Operation table rank -> system_id -> resource_id."""
     phase_rank = {"FINDING": 1, "REMEDIATION": 2, "VERIFICATION": 3}
+    order = {"FINDING": FINDING_ORDER, "REMEDIATION": REMEDIATION_ORDER, "VERIFICATION": VERIFICATION_ORDER}
 
     def op_rank(phase: str, op: str) -> int:
-        if phase == "FINDING":
-            return FINDING_ORDER.index(op) if op in FINDING_ORDER else 99
-        elif phase == "REMEDIATION":
-            return REMEDIATION_ORDER.index(op) if op in REMEDIATION_ORDER else 99
-        elif phase == "VERIFICATION":
-            return VERIFICATION_ORDER.index(op) if op in VERIFICATION_ORDER else 99
-        return 99
+        ops = order.get(phase, [])
+        return ops.index(op) if op in ops else 99
 
     sorted_steps = sorted(
         steps,
-        key=lambda s: (
-            phase_rank.get(s.phase, 99),
-            op_rank(s.phase, s.operation),
-            s.system_id,
-            s.resource_id,
-        ),
+        key=lambda s: (phase_rank.get(s.phase, 99), op_rank(s.phase, s.operation), s.system_id, s.resource_id),
     )
-
-    # Renumber step_no consecutively starting at 1
     for i, step in enumerate(sorted_steps, 1):
         step.step_no = i
-
     return sorted_steps
 
 
@@ -163,159 +178,8 @@ def _effective_state(rec: ObservedRecord) -> str:
     return rec.state
 
 
-def _step(
-    phase: str,
-    system_id: str,
-    resource_id: str,
-    operation: str,
-    state: str,
-    evidence_id: str = "",
-) -> AuditStep:
-    return AuditStep(
-        step_no=0,
-        phase=phase,
-        system_id=system_id,
-        resource_id=resource_id,
-        operation=operation,
-        state=state,
-        evidence_id=evidence_id,
-    )
-
-
-def _records_from_activity_links(
-    system_activity: list[dict],
-    user_identifiers: set[str],
-    audit_at: datetime,
-    not_before: Optional[datetime],
-    corpus: EvidenceCorpus,
-) -> list[ObservedRecord]:
-    """Attribute anonymous evidence records through LINK_RESOURCE_IDENTITY events.
-
-    A data-catalog link names the subject and the resource (sometimes only by
-    file name). The linked evidence file itself carries no identifier, so the
-    link is what makes it retrievable. State always comes from the evidence
-    record; the activity never invents a record of its own.
-    """
-    subject_patterns = [
-        re.compile(rf"(?<![a-z0-9_]){re.escape(i)}(?![a-z0-9_])", re.I)
-        for i in user_identifiers
-        if len(i) >= 4
-    ]
-    if not subject_patterns:
-        return []
-
-    normalized_user_ids = {
-        str(value).strip().lower()
-        for value in user_identifiers
-        if str(value).strip()
-    }
-    attributed: list[ObservedRecord] = []
-    for row in system_activity:
-        if row.get("event_type") != "LINK_RESOURCE_IDENTITY":
-            continue
-        details = str(row.get("details") or "")
-        if not any(p.search(details) for p in subject_patterns):
-            continue
-        event_time = _parse_iso(str(row.get("event_time") or ""))
-        if event_time > audit_at or (not_before and event_time < not_before):
-            continue
-        resource_id = str(row.get("resource_id") or "").strip()
-        file_hint = re.search(r"\(([^()]+\.[A-Za-z0-9]+)\)", details)
-
-        match: Optional[ObservedRecord] = None
-        for rec in corpus.records:
-            # The catalog link may establish subject/resource membership, but
-            # it cannot turn an old state observation into a post-request one.
-            # Both the link and the supporting record must be admissible.
-            if rec.captured_at > audit_at or (
-                not_before is not None and rec.captured_at < not_before
-            ):
-                continue
-            object_key = str(rec.details.get("object_key") or "")
-            same_resource = bool(resource_id) and rec.resource_id == resource_id
-            same_file = bool(file_hint) and object_key.endswith("/" + file_hint.group(1))
-            if not (same_resource or same_file):
-                continue
-            if match is None or rec.captured_at > match.captured_at:
-                match = rec
-        if match is None:
-            continue
-
-        # A link is a claim, not proof.  Direct identifiers may corroborate it;
-        # an explicit file/object link can also establish an anonymous record.
-        # Reject a record whose strong identifiers contradict the subject.
-        def _strong(value: str) -> bool:
-            return (
-                "@" in value
-                or value.startswith("+")
-                or value.startswith("user_")
-                or (len(value) == 64 and all(ch in "0123456789abcdef" for ch in value))
-            )
-
-        direct_identity = bool(match.normalized_identifiers & normalized_user_ids)
-        strong_conflict = any(
-            _strong(value)
-            and value not in normalized_user_ids
-            for value in match.normalized_identifiers
-        )
-        if strong_conflict and not direct_identity:
-            continue
-        if not direct_identity and not file_hint:
-            # An anonymous record with no corroborating identifier needs an
-            # explicit file/object link, not merely an activity assertion.
-            continue
-
-        # Preserve the actual observation time.  The link event can establish
-        # membership, but it is not a new state observation.
-        attributed.append(
-            replace(
-                match,
-                identifiers=set(match.identifiers) | set(user_identifiers),
-                provenance=f"activity:{row.get('activity_id')}",
-            )
-        )
-    return attributed
-
-
-def _linked_activity_verifications(
-    records: list[ObservedRecord],
-    system_activity: list[dict],
-    audit_at: datetime,
-    not_before: Optional[datetime],
-) -> list[AuditStep]:
-    linked_ids = {
-        str(rec.details.get("source_resource_id") or "").strip()
-        for rec in records
-        if str(rec.details.get("source_resource_id") or "").strip()
-    }
-    if not linked_ids:
-        return []
-
-    verification_for = {
-        "DELETE_RECORD": ("VERIFY_RECORD_ABSENT", "ABSENT"),
-        "REDACT_RECORD": ("VERIFY_RECORD_REDACTED", "REDACTED"),
-        "ANONYMIZE_RECORD": ("VERIFY_RECORD_ANONYMIZED", "ANONYMIZED"),
-        "DISABLE_DATA_FLOW": ("VERIFY_DATA_FLOW_DISABLED", "DISABLED"),
-        "BLOCK_RESTORE": ("VERIFY_RESTORE_BLOCKED", "BLOCKED"),
-    }
-    steps: list[AuditStep] = []
-    for row in system_activity:
-        resource_id = str(row.get("resource_id") or "").strip()
-        event_type = str(row.get("event_type") or "")
-        if resource_id not in linked_ids or event_type not in verification_for:
-            continue
-        event_time = _parse_iso(str(row.get("event_time") or ""))
-        if event_time > audit_at or (not_before and event_time < not_before):
-            continue
-        operation, state = verification_for[event_type]
-        steps.append(_step(
-            "VERIFICATION",
-            _normalize_system_id(str(row.get("target_system") or "")),
-            resource_id,
-            operation,
-            state,
-        ))
-    return steps
+def _step(phase, system_id, resource_id, operation, state, evidence_id="") -> AuditStep:
+    return AuditStep(0, phase, system_id, resource_id, operation, state, evidence_id)
 
 
 def _load_default_policy() -> PolicyEngine:
@@ -324,6 +188,248 @@ def _load_default_policy() -> PolicyEngine:
         return PolicyEngine.from_csv(path)
     return PolicyEngine([])
 
+
+def _category_action(policy: PolicyEngine, category: str) -> str:
+    """The action a category's rule names, independent of its condition."""
+    if category == "DATA_FLOW":
+        return "DATA_FLOW"
+    if category == "BACKUP_ARCHIVE":
+        return "BACKUP"
+    rules = policy.rules_for(category)
+    return rules[0].required_action if rules else ""
+
+
+# ---------------------------------------------------------------------------
+# Scope
+# ---------------------------------------------------------------------------
+
+def _scope_resources(
+    ids: set[str],
+    corpus: EvidenceCorpus,
+    audit_at: datetime,
+    links: Iterable,
+) -> dict[tuple[str, str], _Scope]:
+    scope: dict[tuple[str, str], _Scope] = {}
+    for rec in corpus.records_with_identifiers(ids):
+        if rec.observed_within(audit_at):
+            entry = scope.setdefault((rec.system_id, rec.resource_id), _Scope(rec.system_id, rec.resource_id))
+            entry.methods.add("identifier")
+    for link in links:
+        key = (link.system_id, link.resource_id)
+        entry = scope.setdefault(key, _Scope(link.system_id, link.resource_id))
+        entry.methods.add(link.method)
+        entry.category_hint = entry.category_hint or link.category
+        # The worker processed this resource for this request: its final
+        # state is an obligation even when no readback was captured.
+        if link.method in ("direct", "activity"):
+            entry.required = True
+            if link.event_time is not None and (
+                entry.deletion_time is None or link.event_time > entry.deletion_time
+            ):
+                entry.deletion_time = link.event_time
+    return scope
+
+
+def case_scope(user_identifiers, corpus: EvidenceCorpus, audit_at: datetime, links) -> set[tuple[str, str]]:
+    """(system, resource) pairs linked to a subject by identifiers or by the linker."""
+    ids = {str(i).strip().lower() for i in user_identifiers if str(i).strip()}
+    return set(_scope_resources(ids, corpus, audit_at, links))
+
+
+def _catalog_scope_links(ids: set[str], corpus: EvidenceCorpus, system_activity, audit_at):
+    """Catalog links for callers that do not run the global linker."""
+    from activity_linker import ResourceLink
+
+    links = corpus.catalog_links or catalog_links(system_activity or [])
+    result = []
+    for link in links:
+        if link.event_time <= audit_at and link.identifiers & ids:
+            result.append(ResourceLink(link.system_id, link.resource_id, "", "catalog", link.activity_id, link.event_time))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Observations
+# ---------------------------------------------------------------------------
+
+def _omission_records(
+    entry: _Scope,
+    category: str,
+    corpus: EvidenceCorpus,
+    ids: set[str],
+    audit_at: datetime,
+    not_before: Optional[datetime],
+) -> list[ObservedRecord]:
+    """ABSENT observations implied by complete snapshots that omit the resource."""
+    inferred = []
+    for cov in corpus.coverages:
+        if cov.system_id != entry.system_id or cov.data_category != category:
+            continue
+        if entry.resource_id in cov.resource_ids:
+            continue
+        if not cov.observed_within(audit_at, not_before) or not cov.covers_subject(ids):
+            continue
+        if entry.deletion_time is not None and cov.observed_at < entry.deletion_time:
+            # Omitted before the deletion ran: the snapshot does not describe
+            # the post-deletion state.
+            continue
+        inferred.append(ObservedRecord(
+            evidence_id=cov.evidence_id,
+            file_path=Path(""),
+            captured_at=cov.observed_at,
+            origin="snapshot_coverage",
+            system_id=entry.system_id,
+            resource_id=entry.resource_id,
+            data_category=category,
+            state="ABSENT",
+            has_exposed_pii=False,
+            identifiers=set(),
+            details={
+                "inferred_from": cov.provenance,
+                "inference_rank": 2 if cov.subject_identifiers is None else 1,
+            },
+            provenance=f"omission:{cov.evidence_id}:{cov.provenance}",
+            physical_copy=cov.physical_copy,
+            available_at=cov.available_at,
+        ))
+    return inferred
+
+
+_DELETED_ACCOUNT_STATUSES = ("DELETED", "PURGED", "ERASED")
+
+
+def _tombstone_absence(
+    entry: _Scope,
+    corpus: EvidenceCorpus,
+    ids: set[str],
+    audit_at: datetime,
+    not_before: Optional[datetime],
+) -> list[ObservedRecord]:
+    """ABSENT readings of the subject's account from its deleted-account record.
+
+    A tombstone naming the subject with account_status DELETED is the account
+    service's own statement that the subject's account no longer exists.  It
+    applies to the account the linker placed in this subject's scope (one per
+    subject) and only after that account's deletion ran.
+    """
+    inferred = []
+    for rec in corpus.records_with_identifiers(ids):
+        if rec.data_category != "ACCOUNT_TOMBSTONE" or not rec.observed_within(audit_at, not_before):
+            continue
+        status = str(rec.details.get("account_status") or "").strip().upper()
+        if status not in _DELETED_ACCOUNT_STATUSES:
+            continue
+        if entry.deletion_time is not None and rec.captured_at < entry.deletion_time:
+            continue
+        inferred.append(ObservedRecord(
+            evidence_id=rec.evidence_id,
+            file_path=rec.file_path,
+            captured_at=rec.captured_at,
+            origin="snapshot_coverage",
+            system_id=entry.system_id,
+            resource_id=entry.resource_id,
+            data_category="USER_PROFILE",
+            state="ABSENT",
+            has_exposed_pii=False,
+            identifiers=set(),
+            details={
+                "inferred_from": f"tombstone:{rec.resource_id}:account_status={status}",
+                "inference_rank": 1,
+            },
+            provenance=f"tombstone_status:{rec.evidence_id}:{rec.resource_id}",
+            physical_copy="primary",
+            available_at=rec.available_at,
+        ))
+    return inferred
+
+
+def _resolve_support_category(observations: list[ObservedRecord]) -> list[ObservedRecord]:
+    """A support record is a message or an attachment; the latest reading wins.
+
+    The latest interpretation replaces earlier ones for the same physical
+    record, so earlier readbacks still describe its state under the right
+    category.  Both categories are kept only when one capture shows them as
+    separate components of the same record at the same time.
+    """
+    cats = {r.data_category for r in observations}
+    if not {"SUPPORT_MESSAGE", "SUPPORT_ATTACHMENT"} <= cats:
+        return observations
+    latest = max(observations, key=lambda r: (r.captured_at, r.data_category == "SUPPORT_ATTACHMENT"))
+    same_capture = {
+        r.data_category for r in observations
+        if r.evidence_id == latest.evidence_id and r.captured_at == latest.captured_at
+    }
+    if {"SUPPORT_MESSAGE", "SUPPORT_ATTACHMENT"} <= same_capture:
+        return observations
+    return [
+        r if r.data_category == latest.data_category else replace(r, data_category=latest.data_category)
+        for r in observations
+    ]
+
+
+def _latest(observations: list[ObservedRecord]) -> Optional[ObservedRecord]:
+    best = None
+    for rec in observations:
+        if best is None or rec.captured_at > best.captured_at or (
+            rec.captured_at == best.captured_at
+            and _STATE_PRIORITY.get(_effective_state(rec), 0) > _STATE_PRIORITY.get(_effective_state(best), 0)
+        ):
+            best = rec
+    return best
+
+
+def _citation(
+    observations: list[ObservedRecord], latest: ObservedRecord, audit_at: datetime
+) -> Optional[ObservedRecord]:
+    """The record to cite for the latest state.
+
+    Candidates are the observations in the final unbroken run of that state
+    whose file existed by audit_at.  A direct readback is preferred, then an
+    inference from evidence that names the subject, then an omission from a
+    full copy; within each, the earliest.
+    """
+    state = _effective_state(latest)
+    run: list[ObservedRecord] = []
+    run_start = latest.captured_at
+    for rec in sorted(observations, key=lambda r: (r.captured_at, r.evidence_id), reverse=True):
+        if rec.captured_at > latest.captured_at:
+            continue
+        if _effective_state(rec) == state:
+            run.append(rec)
+            run_start = min(run_start, rec.captured_at)
+        elif rec.captured_at < run_start:
+            break
+    citable = [r for r in run if r.citable(audit_at)]
+    if not citable:
+        return None
+    return min(citable, key=lambda r: (r.details.get("inference_rank", 0), r.captured_at, r.evidence_id))
+
+
+def _resource_state(observations: list[ObservedRecord], audit_at: datetime):
+    """Latest state per physical copy, then the worst copy for the resource.
+
+    Returns (state, policy_record, citation_record_or_None), or None when no
+    copy has an interpretable observation.
+    """
+    by_copy: dict[str, list[ObservedRecord]] = {}
+    for rec in observations:
+        if _effective_state(rec) in _STATE_PRIORITY:
+            by_copy.setdefault(rec.physical_copy, []).append(rec)
+    chosen = None
+    for copy, recs in sorted(by_copy.items()):
+        latest = _latest(recs)
+        rank = (_STATE_PRIORITY[_effective_state(latest)], copy == "primary", latest.captured_at)
+        if chosen is None or rank > chosen[0]:
+            chosen = (rank, latest, _citation(recs, latest, audit_at))
+    if chosen is None:
+        return None
+    _, latest, cite = chosen
+    return _effective_state(latest), latest, cite
+
+
+# ---------------------------------------------------------------------------
+# Main entry
+# ---------------------------------------------------------------------------
 
 def reconstruct_case_state(
     case_id: str,
@@ -335,247 +441,244 @@ def reconstruct_case_state(
     require_evidence: bool = False,
     not_before: Optional[datetime] = None,
     policy_engine: Optional[PolicyEngine] = None,
-    require_account_closure: bool = True,
+    require_account_closure: Optional[bool] = None,
+    links: Optional[list] = None,
 ) -> CaseAuditResult:
-    """Reconstruct system state for a given case and generate the audit plan.
+    """Reconstruct system state for a case and generate the audit plan.
 
-    ``require_evidence`` makes a COMPLETE verdict conditional on at least one
-    admissible compliant observation. ``not_before`` excludes evidence captured
-    before the deletion request, which describes an earlier state.
+    ``links`` are the resources the global activity linker placed in this
+    case's scope (identifier-free accounts, anonymized analytics, catalog
+    links).  Without them only identifier-linked resources and catalog links
+    are considered.  ``require_evidence`` makes COMPLETE conditional on at
+    least one admissible compliant observation.  ``not_before`` excludes
+    observations from before the deletion request.
 
-    ``require_account_closure`` additionally requires evidence that the account
-    itself is closed: either a USER_PROFILE verified ABSENT or a clean
-    ACCOUNT_TOMBSTONE verified REDACTED.  The named COMPLETE rule is “every
-    relevant copy”; the account profile is treated as a relevant copy because
-    every in-scope request is an account-deletion request.  This closure gate
-    is therefore an inferred minimum, not a separately named CSV condition.
-    Categories with no observation are still not treated as proven absent.
+    ``require_account_closure`` is accepted for backward compatibility and
+    ignored: the account is an ordinary obligation, not a separate gate.
     """
     if not is_deletion:
-        return CaseAuditResult(
-            case_id=case_id,
-            deletion_status="NOT_APPLICABLE",
-            steps=[],
-        )
+        return CaseAuditResult(case_id=case_id, deletion_status="NOT_APPLICABLE", steps=[])
 
     policy = policy_engine or _load_default_policy()
-
-    # 1. Retrieve admissible evidence for the identifiers.
-    records = corpus.get_records_for_identifiers(
-        user_identifiers, audit_at, not_before=not_before
-    )
-
-    if system_activity:
-        records = records + _records_from_activity_links(
-            system_activity, user_identifiers, audit_at, not_before, corpus
-        )
-
-    # 2. De-duplicate observations of the same (system_id, resource_id, category).
-    # A support ticket can legitimately have both SUPPORT_MESSAGE and
-    # SUPPORT_ATTACHMENT records; resource-only deduplication would lose one
-    # policy action.  The newest admissible evidence wins; equal capture times
-    # resolve toward the non-compliant reading.
-    latest_by_key: dict[tuple[str, str, str], ObservedRecord] = {}
-    for r in records:
-        key = (r.system_id, r.resource_id, r.data_category)
-        current = latest_by_key.get(key)
-        if current is None:
-            latest_by_key[key] = r
-        elif r.captured_at > current.captured_at:
-            latest_by_key[key] = r
-        elif r.captured_at == current.captured_at:
-            if _STATE_PRIORITY.get(r.state, 0) > _STATE_PRIORITY.get(current.state, 0):
-                latest_by_key[key] = r
-
-    # Keep the newest record for policy conditions, and choose the earliest
-    # same-category record confirming the same effective state for a stable
-    # citation.  The two roles must not be conflated.
-    policy_by_key: dict[tuple[str, str, str], ObservedRecord] = {}
-    citation_by_key: dict[tuple[str, str, str], ObservedRecord] = {}
-    for key, latest in latest_by_key.items():
-        confirming = [
-            r for r in records
-            if (r.system_id, r.resource_id, r.data_category) == key
-            and _effective_state(r) == _effective_state(latest)
-        ]
-        policy_by_key[key] = latest
-        citation_by_key[key] = min(confirming, key=lambda r: r.captured_at)
+    ids = {str(i).strip().lower() for i in user_identifiers if str(i).strip()}
+    strong = strong_identifiers(ids)
+    if links is None:
+        links = _catalog_scope_links(strong, corpus, system_activity, audit_at)
+    scope = _scope_resources(ids, corpus, audit_at, links)
 
     findings: list[AuditStep] = []
     remediations: list[AuditStep] = []
     verifications: list[AuditStep] = []
     evidence_gaps: list[str] = []
-    retention_gap = False
-    policy_gap = False
-    state_gap = False
-    account_closed = False
+    gap = False
+    considered: list[ObservedRecord] = []
 
-    # 3. Apply the supplied policy rules to every observed resource/category.
-    for (sys_id, res_id, cat), policy_rec in sorted(policy_by_key.items()):
-        citation_rec = citation_by_key[(sys_id, res_id, cat)]
-        eid = citation_rec.evidence_id
-        state = _effective_state(policy_rec)
+    for key in sorted(scope):
+        entry = scope[key]
+        sys_id, res_id = key
+        observed = [
+            rec for rec in corpus.records_for(sys_id, res_id)
+            if rec.observed_within(audit_at, not_before)
+        ]
+        categories = {rec.data_category for rec in observed} or (
+            {entry.category_hint} if entry.category_hint else set()
+        )
+        for category in sorted(categories):
+            if _category_action(policy, category) == "DELETE":
+                observed += _omission_records(entry, category, corpus, strong, audit_at, not_before)
+        if sys_id == "account_service" and "USER_PROFILE" in categories and entry.required:
+            observed += _tombstone_absence(entry, corpus, strong, audit_at, not_before)
+        if sys_id == "support_platform":
+            observed = _resolve_support_category(observed)
 
-        if cat == "DATA_FLOW":
-            # Data flows are operational mechanisms rather than a rule category.
-            if state == "ACTIVE":
-                findings.append(_step("FINDING", sys_id, res_id, "REPORT_ACTIVE_DATA_FLOW", "ACTIVE", eid))
-                remediations.append(_step("REMEDIATION", sys_id, res_id, "DISABLE_DATA_FLOW", "DISABLED"))
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED"))
-            elif state == "DISABLED":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED", eid))
-            elif state == "ABSENT":
-                # No observed flow exists; there is nothing to disable.
-                pass
-            else:
-                state_gap = True
-                evidence_gaps.append(f"unsupported DATA_FLOW state {state!r} for {res_id}")
+        if not observed:
+            if not entry.required:
+                continue
+            # The worker touched this resource for this request but no
+            # admissible evidence shows its state: an unresolved obligation.
+            gap = True
+            evidence_gaps.append(f"no admissible state evidence for {entry.category_hint or 'resource'} {res_id}")
+            _plan_final_state(policy, entry.category_hint, _Stub(entry.category_hint), sys_id, res_id,
+                              audit_at, ids, verifications)
             continue
 
-        if cat == "BACKUP_ARCHIVE":
-            # The policy action is RETAIN; restore access must also be blocked.
-            if state == "ACTIVE":
-                findings.append(_step("FINDING", sys_id, res_id, "REPORT_RESTORE_RISK", "ACTIVE", eid))
-                remediations.append(_step("REMEDIATION", sys_id, res_id, "BLOCK_RESTORE", "BLOCKED"))
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED"))
-            elif state == "BLOCKED":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED", eid))
-            elif state == "ABSENT":
-                retention_gap = True
-                evidence_gaps.append(f"required backup archive is not present: {res_id}")
-            else:
-                state_gap = True
-                evidence_gaps.append(f"unsupported BACKUP_ARCHIVE state {state!r} for {res_id}")
-            continue
-
-        decision = policy.decide(policy_rec, audit_at, user_identifiers)
-        if decision.condition_value is False:
-            verification = _FALSE_CONDITION_VERIFICATIONS.get(cat)
-            if verification is not None and state == verification[0]:
-                expected_state, operation = verification
-                verifications.append(
-                    _step("VERIFICATION", sys_id, res_id, operation, expected_state, eid)
-                )
-            else:
-                policy_gap = True
-                evidence_gaps.append(
-                    f"policy gap for {cat}/{res_id}: {decision.reason}"
-                )
-            continue
-        if not decision.supported or (decision.rule_id and not decision.action):
-            policy_gap = True
-            evidence_gaps.append(
-                f"policy gap for {cat}/{res_id}: {decision.reason}"
+        by_category: dict[str, list[ObservedRecord]] = {}
+        for rec in observed:
+            by_category.setdefault(rec.data_category, []).append(rec)
+        for cat, recs in sorted(by_category.items()):
+            resolved = _resource_state(recs, audit_at)
+            if resolved is None:
+                gap = True
+                evidence_gaps.append(f"state of {cat}/{res_id} is not interpretable")
+                continue
+            state, policy_rec, citation_rec = resolved
+            considered.append(policy_rec)
+            if citation_rec is None:
+                # The state is known only from a file published after
+                # audit_at: it cannot be cited, so it proves nothing yet.
+                gap = True
+                evidence_gaps.append(f"{cat}/{res_id} state {state} is not citable at audit_at")
+                _plan_final_state(policy, cat, policy_rec, sys_id, res_id, audit_at, ids, verifications)
+                continue
+            outcome = _apply_policy(
+                policy, cat, sys_id, res_id, state, policy_rec, citation_rec.evidence_id,
+                audit_at, ids, findings, remediations, verifications, evidence_gaps,
             )
-            continue
-        action = decision.action
+            gap = gap or outcome
 
-        if action == "DELETE":
-            if state == "ABSENT":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT", eid))
-                if cat == "USER_PROFILE":
-                    account_closed = True
-            elif state in ("PRESENT", "REDACTED", "ANONYMIZED", "ACTIVE"):
-                findings.append(_step("FINDING", sys_id, res_id, "REPORT_REMAINING_RECORD", "PRESENT", eid))
-                remediations.append(_step("REMEDIATION", sys_id, res_id, "DELETE_RECORD", "ABSENT"))
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT"))
-            else:
-                state_gap = True
-                evidence_gaps.append(f"unsupported DELETE state {state!r} for {res_id}")
-
-        elif action == "REDACT":
-            if state == "PRESENT":
-                findings.append(_step("FINDING", sys_id, res_id, "REPORT_EXPOSED_PII", "PRESENT", eid))
-                remediations.append(_step("REMEDIATION", sys_id, res_id, "REDACT_RECORD", "REDACTED"))
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_REDACTED", "REDACTED"))
-            elif state == "REDACTED":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_REDACTED", "REDACTED", eid))
-                if cat == "ACCOUNT_TOMBSTONE":
-                    account_closed = True
-            elif state == "ABSENT":
-                # Nothing remains to redact.
-                pass
-            else:
-                state_gap = True
-                evidence_gaps.append(f"unsupported REDACT state {state!r} for {res_id}")
-
-        elif action == "ANONYMIZE":
-            if state == "PRESENT":
-                findings.append(_step("FINDING", sys_id, res_id, "REPORT_EXPOSED_PII", "PRESENT", eid))
-                remediations.append(_step("REMEDIATION", sys_id, res_id, "ANONYMIZE_RECORD", "ANONYMIZED"))
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ANONYMIZED", "ANONYMIZED"))
-            elif state == "ANONYMIZED":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ANONYMIZED", "ANONYMIZED", eid))
-            elif state == "ABSENT":
-                # Nothing attributable remains.
-                pass
-            else:
-                state_gap = True
-                evidence_gaps.append(f"unsupported ANONYMIZE state {state!r} for {res_id}")
-
-        elif action == "RETAIN":
-            if state == "PRESENT":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_PRESENT", "PRESENT", eid))
-            elif state == "ABSENT":
-                # A policy-required retained record is missing: the case cannot
-                # be proven complete, and no allowed operation can remediate it.
-                retention_gap = True
-                evidence_gaps.append(f"required retained record is not present: {res_id}")
-            else:
-                state_gap = True
-                evidence_gaps.append(f"unsupported RETAIN state {state!r} for {res_id}")
-
-        else:
-            policy_gap = True
-            evidence_gaps.append(f"unsupported policy action {action!r} for {res_id}")
-
-    # 4. Require evidence that the account itself is closed.  Unobserved
-    # categories are not treated as absent; the result is an honest incomplete
-    # evidence gap rather than a misleading COMPLETE.
-    account_gap = bool(require_account_closure and not account_closed)
-    if account_gap:
-        evidence_gaps.append("account closure is not evidenced by an absent profile or clean tombstone")
-
-    # 5. Determine overall deletion status
-    if findings or retention_gap or policy_gap or state_gap or account_gap:
+    if findings or gap:
         status = "INCOMPLETE"
-    elif require_evidence and not verifications:
-        # No admissible evidence proves the compliant state.
+    elif require_evidence and not any(v.evidence_id for v in verifications):
         status = "INCOMPLETE"
         evidence_gaps.append("no admissible compliant verification")
+    elif not verifications:
+        status = "INCOMPLETE" if require_evidence else "COMPLETE"
     else:
         status = "COMPLETE"
 
-    # 5. Assemble final steps
     if status == "INCOMPLETE":
-        # Findings cite evidence; remediation and post-remediation verification
-        # describe future work and therefore carry an empty evidence_id.
+        # Findings cite evidence; remediation and post-remediation checks
+        # describe future work and carry an empty evidence_id.
         for v in verifications:
             v.evidence_id = ""
-        if system_activity:
-            existing = {
-                (v.system_id, v.resource_id, v.operation)
-                for v in verifications
-            }
-            for v in _linked_activity_verifications(
-                records, system_activity, audit_at, not_before
-            ):
-                key = (v.system_id, v.resource_id, v.operation)
-                if key not in existing:
-                    verifications.append(v)
-                    existing.add(key)
         all_steps = findings + remediations + verifications
     else:
-        # COMPLETE cases contain only evidence-backed verification checks.
         all_steps = verifications
-
-    # 6. Apply mandatory step ordering
-    sorted_steps = _sort_steps(all_steps)
 
     return CaseAuditResult(
         case_id=case_id,
         deletion_status=status,
-        steps=sorted_steps,
-        findings=list(policy_by_key.values()),
+        steps=_sort_steps(_dedupe(all_steps)),
+        findings=considered,
         evidence_gaps=evidence_gaps,
     )
+
+
+class _Stub:
+    """Minimal record for asking the policy about an unobserved resource."""
+
+    def __init__(self, category: str):
+        self.data_category = category
+        self.details: dict = {}
+        self.state = ""
+        self.identifiers: set = set()
+
+
+def _plan_final_state(policy, category, record, sys_id, res_id, audit_at, ids, verifications) -> None:
+    """Future check of the state an unproven resource must end in."""
+    action = _category_action(policy, category)
+    if action not in ("DATA_FLOW", "BACKUP"):
+        # Conditional rules fall back to their conservative action.
+        action = policy.decide(record, audit_at, ids).action or action
+    if action in _FINAL_VERIFICATION:
+        operation, final_state = _FINAL_VERIFICATION[action]
+        verifications.append(_step("VERIFICATION", sys_id, res_id, operation, final_state))
+
+
+def _dedupe(steps: list[AuditStep]) -> list[AuditStep]:
+    seen = set()
+    result = []
+    for s in steps:
+        key = (s.phase, s.system_id, s.resource_id, s.operation, s.state)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(s)
+    return result
+
+
+def _apply_policy(
+    policy, cat, sys_id, res_id, state, policy_rec, eid, audit_at, ids,
+    findings, remediations, verifications, evidence_gaps,
+) -> bool:
+    """Append the steps one resource/category requires; return True on a gap."""
+    if cat == "DATA_FLOW":
+        # Data flows are operational mechanisms rather than a rule category.
+        if state == "ACTIVE":
+            findings.append(_step("FINDING", sys_id, res_id, "REPORT_ACTIVE_DATA_FLOW", "ACTIVE", eid))
+            remediations.append(_step("REMEDIATION", sys_id, res_id, "DISABLE_DATA_FLOW", "DISABLED"))
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED"))
+        elif state == "DISABLED":
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED", eid))
+        elif state != "ABSENT":
+            evidence_gaps.append(f"unsupported DATA_FLOW state {state!r} for {res_id}")
+            return True
+        return False
+
+    if cat == "BACKUP_ARCHIVE":
+        # The policy action is RETAIN; restore access must also be blocked.
+        if state == "ACTIVE":
+            findings.append(_step("FINDING", sys_id, res_id, "REPORT_RESTORE_RISK", "ACTIVE", eid))
+            remediations.append(_step("REMEDIATION", sys_id, res_id, "BLOCK_RESTORE", "BLOCKED"))
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED"))
+        elif state == "BLOCKED":
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED", eid))
+        elif state == "ABSENT":
+            evidence_gaps.append(f"required backup archive is not present: {res_id}")
+            return True
+        else:
+            evidence_gaps.append(f"unsupported BACKUP_ARCHIVE state {state!r} for {res_id}")
+            return True
+        return False
+
+    decision = policy.decide(policy_rec, audit_at, ids)
+    if decision.condition_value is False:
+        verification = _FALSE_CONDITION_VERIFICATIONS.get(cat)
+        if verification is not None and state == verification[0]:
+            expected_state, operation = verification
+            verifications.append(_step("VERIFICATION", sys_id, res_id, operation, expected_state, eid))
+            return False
+        evidence_gaps.append(f"policy gap for {cat}/{res_id}: {decision.reason}")
+        return True
+    if not decision.supported or (decision.rule_id and not decision.action):
+        evidence_gaps.append(f"policy gap for {cat}/{res_id}: {decision.reason}")
+        return True
+    action = decision.action
+
+    if action == "DELETE":
+        if state == "ABSENT":
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT", eid))
+        else:
+            findings.append(_step("FINDING", sys_id, res_id, "REPORT_REMAINING_RECORD", "PRESENT", eid))
+            remediations.append(_step("REMEDIATION", sys_id, res_id, "DELETE_RECORD", "ABSENT"))
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT"))
+        return False
+
+    if action == "REDACT":
+        if state == "PRESENT":
+            findings.append(_step("FINDING", sys_id, res_id, "REPORT_EXPOSED_PII", "PRESENT", eid))
+            remediations.append(_step("REMEDIATION", sys_id, res_id, "REDACT_RECORD", "REDACTED"))
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_REDACTED", "REDACTED"))
+        elif state == "REDACTED":
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_REDACTED", "REDACTED", eid))
+        elif state != "ABSENT":
+            evidence_gaps.append(f"unsupported REDACT state {state!r} for {res_id}")
+            return True
+        return False
+
+    if action == "ANONYMIZE":
+        if state == "PRESENT":
+            findings.append(_step("FINDING", sys_id, res_id, "REPORT_EXPOSED_PII", "PRESENT", eid))
+            remediations.append(_step("REMEDIATION", sys_id, res_id, "ANONYMIZE_RECORD", "ANONYMIZED"))
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ANONYMIZED", "ANONYMIZED"))
+        elif state == "ANONYMIZED":
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ANONYMIZED", "ANONYMIZED", eid))
+        elif state != "ABSENT":
+            evidence_gaps.append(f"unsupported ANONYMIZE state {state!r} for {res_id}")
+            return True
+        return False
+
+    if action == "RETAIN":
+        if state == "PRESENT":
+            verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_PRESENT", "PRESENT", eid))
+            return False
+        if state == "ABSENT":
+            # A policy-required retained record is missing: the case cannot
+            # be proven complete, and no allowed operation can remediate it.
+            evidence_gaps.append(f"required retained record is not present: {res_id}")
+        else:
+            evidence_gaps.append(f"unsupported RETAIN state {state!r} for {res_id}")
+        return True
+
+    evidence_gaps.append(f"unsupported policy action {action!r} for {res_id}")
+    return True

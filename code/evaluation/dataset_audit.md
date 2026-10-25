@@ -1,3 +1,5 @@
+> **Superseded (2026-10-25).** This audit describes the earlier pipeline (account-closure gate, identifier-only linking). The current design and measured results are in `evaluation_report.md`.
+
 ﻿# Dataset Audit — Ghost Data Still Exists
 
 **Produced by:** Antigravity (claude-sonnet-4-5)

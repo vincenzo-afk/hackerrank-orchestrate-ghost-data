@@ -224,7 +224,7 @@ class TestMissingEvidence:
         )
         assert res.deletion_status == "INCOMPLETE"
         assert res.steps == []
-        assert any("account closure" in gap for gap in res.evidence_gaps)
+        assert any("no admissible compliant verification" in gap for gap in res.evidence_gaps)
 
 
 # ---------------------------------------------------------------------------

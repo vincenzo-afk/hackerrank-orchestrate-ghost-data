@@ -1,3 +1,5 @@
+> **Superseded (2026-10-25).** This audit describes the earlier pipeline (account-closure gate, identifier-only linking). The current design and measured results are in `evaluation_report.md`.
+
 # Phase 1 code audit and corrective changes — 2026-10-25
 
 ## A. Verdict

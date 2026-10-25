@@ -13,7 +13,7 @@ import os
 import re
 import sqlite3
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Any
@@ -33,7 +33,7 @@ class EvidenceParseError(RuntimeError):
 class ObservedRecord:
     evidence_id: str
     file_path: Path
-    captured_at: datetime
+    captured_at: datetime  # observed_at: the time the state was true
     origin: str
     system_id: str
     resource_id: str
@@ -43,10 +43,80 @@ class ObservedRecord:
     identifiers: set[str]  # emails, user_ids, phones, hashes found in the record
     details: dict[str, Any] = field(default_factory=dict)
     provenance: str = ""
+    # Which stored copy was read: primary, or a named replica table.
+    physical_copy: str = "primary"
+    # When the evidence file itself became available (manifest captured_at).
+    # A state observed before audit_at is still inadmissible if the file
+    # that reports it was produced after audit_at.
+    available_at: Optional[datetime] = None
 
     def __post_init__(self):
         # Normalize identifiers to lowercase for robust lookup while preserving originals
         self.normalized_identifiers: set[str] = {i.strip().lower() for i in self.identifiers if i and isinstance(i, str)}
+        if self.available_at is None:
+            self.available_at = self.captured_at
+
+    @property
+    def observed_at(self) -> datetime:
+        return self.captured_at
+
+    def observed_within(self, audit_at: datetime, not_before: Optional[datetime] = None) -> bool:
+        """The state this record describes held at or before audit_at."""
+        if self.captured_at > audit_at:
+            return False
+        return not_before is None or self.captured_at >= not_before
+
+    def citable(self, audit_at: datetime) -> bool:
+        """The file reporting the state existed by audit_at, so it can be cited."""
+        return self.available_at <= audit_at
+
+    def admissible(self, audit_at: datetime, not_before: Optional[datetime] = None) -> bool:
+        """Both the state time and the file availability must precede audit_at."""
+        return self.observed_within(audit_at, not_before) and self.citable(audit_at)
+
+
+@dataclass(frozen=True)
+class SnapshotCoverage:
+    """What a snapshot is complete for, so an omitted resource can be inferred absent.
+
+    ``subject_identifiers`` is None for a full physical copy (every subject),
+    otherwise the strong identifiers of the subjects the capture was scoped to.
+    """
+    evidence_id: str
+    system_id: str
+    data_category: str
+    physical_copy: str
+    observed_at: datetime
+    available_at: datetime
+    resource_ids: frozenset
+    subject_identifiers: Optional[frozenset]
+    provenance: str
+
+    def covers_subject(self, identifiers: set[str]) -> bool:
+        if self.subject_identifiers is None:
+            return True
+        return bool(self.subject_identifiers & identifiers)
+
+    def observed_within(self, audit_at: datetime, not_before: Optional[datetime] = None) -> bool:
+        if self.observed_at > audit_at:
+            return False
+        return not_before is None or self.observed_at >= not_before
+
+    def admissible(self, audit_at: datetime, not_before: Optional[datetime] = None) -> bool:
+        return self.observed_within(audit_at, not_before) and self.available_at <= audit_at
+
+
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def is_strong_identifier(value: str) -> bool:
+    """Emails, phones, user references and email hashes identify a subject; names do not."""
+    v = str(value).strip().lower()
+    return bool(v) and ("@" in v or v.startswith("+") or v.startswith("user_") or bool(_HEX64.match(v)))
+
+
+def strong_identifiers(values) -> set[str]:
+    return {str(v).strip().lower() for v in values if is_strong_identifier(v)}
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -243,6 +313,44 @@ def _has_direct_pii(item: dict[str, Any]) -> bool:
     return any(_clean_value(item.get(k)) for k in _DIRECT_PII_FIELDS)
 
 
+_MESSAGE_BODY_FIELDS = ("message_text", "message", "message_excerpt", "body", "content")
+
+
+def _has_message_body(item: dict[str, Any]) -> bool:
+    """Whether the record body (or its identifying fields) was actually read."""
+    return any(k in item for k in _MESSAGE_BODY_FIELDS + _DIRECT_PII_FIELDS)
+
+
+def _restore_state(item: dict[str, Any]) -> str:
+    """Restore authorization fields → BLOCKED / ACTIVE, or "" when not stated."""
+    decision = _clean_value(item.get("decision")).lower()
+    if decision in ("deny", "denied", "block", "blocked"):
+        return "BLOCKED"
+    if decision in ("allow", "allowed", "grant", "granted"):
+        return "ACTIVE"
+    if _clean_value(item.get("deletion_block")).lower() == "true":
+        return "BLOCKED"
+    allowed = _clean_value(item.get("restore_allowed")).lower()
+    if allowed in ("true", "1", "false", "0"):
+        return "ACTIVE" if allowed in ("true", "1") else "BLOCKED"
+    if _clean_value(item.get("deletion_block")).lower() == "false":
+        return "ACTIVE"
+    if _clean_value(item.get("eligible")).lower() == "true":
+        return "ACTIVE"
+    return ""
+
+
+_ATTACHMENT_EVENTS = ("attachment_pii_scan", "attachment_scan_completed")
+
+
+def _is_attachment_event(item: dict[str, Any]) -> bool:
+    event = _clean_value(item.get("event")).lower()
+    if event in _ATTACHMENT_EVENTS:
+        return True
+    payload = _clean_value(item.get("file")) or _clean_value(item.get("object_key"))
+    return "attachment" in event and bool(payload)
+
+
 def _category_from_hint(hint: str, resource_id: str = "") -> str | None:
     """Map a record_type/collection/table name onto a canonical data category."""
     h = hint.strip().lower()
@@ -335,10 +443,17 @@ def _state_for_record(
         # only direct identifiers trigger a redaction requirement.
         if state == "REDACTED":
             return "REDACTED"
+        if result == "IDENTIFIABLE":
+            # The lookup itself reports the record as identifiable, wherever
+            # the identifier is stored (lookup_value, subject_reference, ...).
+            return "PRESENT"
         if _has_direct_pii(item):
             return "PRESENT"
         if _text_ids(item):
             return "PRESENT"
+        if not _has_message_body(item):
+            # Without the record body, missing identifiers prove nothing.
+            return "UNKNOWN"
         return "REDACTED"
 
     if category == "SUPPORT_ATTACHMENT":
@@ -363,8 +478,12 @@ def _state_for_record(
         return "PRESENT" if direct else "REDACTED"
 
     if category == "BACKUP_ARCHIVE":
-        if "restore_allowed" in item:
-            return "ACTIVE" if _as_bool(item.get("restore_allowed")) else "BLOCKED"
+        restore = _restore_state(item)
+        if restore:
+            return restore
+        if "restore_authorization" in _clean_value(item.get("event")).lower():
+            # An authorization result we cannot read is not a restore risk.
+            return "UNKNOWN"
         return state or "ACTIVE"
 
     if category == "DATA_FLOW":
@@ -511,26 +630,79 @@ def _merge_document(item: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _physical_copy_for_table(table: str) -> str:
+    """customer_profiles_failover_replica -> failover_replica; *_primary -> primary."""
+    t = table.lower()
+    if t.endswith("_primary") or "replica" not in t:
+        return "primary"
+    head, _, tail = t.partition("replica")
+    qualifier = head.rstrip("_").rsplit("_", 1)[-1]
+    if qualifier in ("failover", "read", "reporting"):
+        return f"{qualifier}_replica{tail}"
+    return f"replica{tail}"
+
+
+def _sql_header(text: str) -> dict[str, str]:
+    header: dict[str, str] = {}
+    for line in text.splitlines()[:12]:
+        if not line.startswith("--"):
+            continue
+        body = line[2:].strip()
+        if "point-in-time database snapshot" in body:
+            header["point_in_time"] = "true"
+        key, sep, value = body.partition(":")
+        if sep and key.strip().lower() in ("captured at", "database topology"):
+            header[key.strip().lower()] = value.strip()
+    return header
+
+
 def _parse_sql_evidence(
     file_id: str,
     file_path: Path,
     origin: str,
     captured_at: datetime,
+    coverages: Optional[list[SnapshotCoverage]] = None,
 ) -> list[ObservedRecord]:
     records: list[ObservedRecord] = []
     conn = sqlite3.connect(":memory:")
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as sf:
-            conn.executescript(sf.read())
+            script = sf.read()
+        header = _sql_header(script)
+        if header.get("captured at"):
+            captured_at = _parse_iso(header["captured at"])
+        conn.executescript(script)
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [r[0] for r in cursor.fetchall()]
 
+        scope: dict[str, datetime] = {}
+        if "snapshot_scope" in (t.lower() for t in tables):
+            cursor.execute("SELECT origin_system, captured_at FROM snapshot_scope")
+            for system, scope_time in cursor.fetchall():
+                scope[_normalize_system_id(str(system))] = _parse_iso(str(scope_time))
+
+        # Dedicated single-category tables: (table, system, category, copy, ids).
+        dedicated: list[tuple[str, str, str, str, set[str]]] = []
+        # Mixed record_json tables, and the collection of each record in them.
+        mixed_tables: list[str] = []
+        mixed_collection: dict[int, str] = {}
         for tbl in tables:
             if tbl.lower() == "snapshot_scope":
                 continue
+            copy = _physical_copy_for_table(tbl)
             cursor.execute(f"PRAGMA table_info({tbl})")
             cols = [r[1] for r in cursor.fetchall()]
+            first_record = len(records)
+            if "record_json" not in cols:
+                table_system = _sql_system_for_table(tbl)
+                table_category = _category_from_hint(tbl) or "UNKNOWN_CATEGORY"
+                if table_category == "USER_PROFILE" and table_system == "integration_service":
+                    table_category = "DATA_FLOW"
+                table_ids: set[str] = set()
+                dedicated.append((tbl, table_system, table_category, copy, table_ids))
+            else:
+                mixed_tables.append(tbl)
             cursor.execute(f"SELECT * FROM {tbl}")
             for row in cursor.fetchall():
                 row_dict = dict(zip(cols, row))
@@ -578,6 +750,7 @@ def _parse_sql_evidence(
                             provenance=f"{tbl}:{res_id}",
                         )
                     )
+                    mixed_collection[id(records[-1])] = str(collection)
                     continue
 
                 system_id = _sql_system_for_table(tbl)
@@ -601,8 +774,72 @@ def _parse_sql_evidence(
                         provenance=f"{tbl}:{res_id}",
                     )
                 )
+            for rec in records[first_record:]:
+                rec.physical_copy = copy
+                if "record_json" not in cols:
+                    table_ids.add(rec.resource_id)
     finally:
         conn.close()
+
+    if coverages is not None:
+        if header.get("point_in_time"):
+            # A point-in-time database snapshot captures every row of each
+            # dedicated table, per physical copy.  An empty table is treated
+            # as an unproven export, never as proof that everything is gone.
+            for tbl, system, category, copy, ids in dedicated:
+                if not ids or category == "UNKNOWN_CATEGORY":
+                    continue
+                coverages.append(SnapshotCoverage(
+                    evidence_id=file_id, system_id=system, data_category=category,
+                    physical_copy=copy, observed_at=captured_at, available_at=captured_at,
+                    resource_ids=frozenset(ids), subject_identifiers=None,
+                    provenance=f"sql_full_table:{tbl}",
+                ))
+            # Mixed tables hold several collections captured for the subjects
+            # the snapshot names.  Every table in the topology is a copy of
+            # the same database, so a collection seen in any copy is one of
+            # its collections, and a copy with no rows of it holds none for
+            # those subjects (replication drift).
+            subjects = frozenset(
+                ident for rec in records for ident in strong_identifiers(rec.identifiers)
+            )
+            collections: dict[str, tuple[str, str]] = {}
+            per_copy: dict[str, dict[str, set[str]]] = {}
+            for rec in records:
+                table = rec.provenance.split(":", 1)[0]
+                collection = mixed_collection.get(id(rec))
+                if collection is None:
+                    continue
+                collections.setdefault(collection, (rec.system_id, rec.data_category))
+                per_copy.setdefault(table, {}).setdefault(collection, set()).add(rec.resource_id)
+            for table in (mixed_tables if subjects else []):
+                copy = _physical_copy_for_table(table)
+                for collection, (system, category) in sorted(collections.items()):
+                    if category == "UNKNOWN_CATEGORY" or not _category_from_hint(collection):
+                        continue
+                    coverages.append(SnapshotCoverage(
+                        evidence_id=file_id, system_id=system, data_category=category,
+                        physical_copy=copy, observed_at=captured_at, available_at=captured_at,
+                        resource_ids=frozenset(per_copy.get(table, {}).get(collection, set())),
+                        subject_identifiers=subjects,
+                        provenance=f"sql_full_collection:{table}.{collection}",
+                    ))
+        elif scope:
+            # A scoped inventory is complete only for the subjects it was
+            # captured for; an inventory naming no subject proves nothing.
+            subjects = frozenset(
+                ident for rec in records for ident in strong_identifiers(rec.identifiers)
+            )
+            if subjects:
+                for tbl, system, category, copy, ids in dedicated:
+                    if system not in scope or category == "UNKNOWN_CATEGORY":
+                        continue
+                    coverages.append(SnapshotCoverage(
+                        evidence_id=file_id, system_id=system, data_category=category,
+                        physical_copy=copy, observed_at=scope[system], available_at=captured_at,
+                        resource_ids=frozenset(ids), subject_identifiers=subjects,
+                        provenance=f"sql_scoped_inventory:{tbl}",
+                    ))
 
     return records
 
@@ -649,6 +886,7 @@ def _parse_json_evidence(
     file_path: Path,
     origin: str,
     captured_at: datetime,
+    coverages: Optional[list[SnapshotCoverage]] = None,
 ) -> list[ObservedRecord]:
     records: list[ObservedRecord] = []
     with open(file_path, "r", encoding="utf-8") as jf:
@@ -756,6 +994,9 @@ def _parse_json_evidence(
     if snapshots is not None and not isinstance(snapshots, list):
         raise EvidenceParseError(f"{file_id}: snapshots is not a list")
     if isinstance(snapshots, list):
+        # Snapshots sharing one capture time form a single scoped capture;
+        # each collection in it is complete for the subjects it names.
+        groups: dict[datetime, list[tuple[str, str, list[ObservedRecord]]]] = {}
         for snap in snapshots:
             if not isinstance(snap, dict):
                 raise EvidenceParseError(f"{file_id}: snapshot entry is not an object")
@@ -765,12 +1006,15 @@ def _parse_json_evidence(
             snapshot_records = snap.get("records", []) or []
             if not isinstance(snapshot_records, list):
                 raise EvidenceParseError(f"{file_id}: snapshot records is not a list")
+            members: list[ObservedRecord] = []
+            groups.setdefault(snapshot_time, []).append((system_id, collection, members))
             for item in snapshot_records:
                 if not isinstance(item, dict):
                     raise EvidenceParseError(f"{file_id}: snapshot record is not an object")
                 hint = collection
+                item_system = system_id
                 if collection == "operational_record_history":
-                    system_id = _normalize_system_id(
+                    item_system = _normalize_system_id(
                         _clean_value(item.get("system")) or system_id
                     )
                     hint = _clean_value(item.get("record_type")) or collection
@@ -779,7 +1023,7 @@ def _parse_json_evidence(
                     file_path=file_path,
                     origin=origin,
                     captured_at=snapshot_time,
-                    system_id=system_id,
+                    system_id=item_system,
                     item=item,
                     resource_id=_clean_value(item.get("resource_id")),
                     category_hint=hint,
@@ -787,6 +1031,30 @@ def _parse_json_evidence(
                 )
                 if rec:
                     records.append(rec)
+                    members.append(rec)
+        if coverages is not None:
+            for snapshot_time, collections in groups.items():
+                subjects = frozenset(
+                    ident
+                    for _, _, members in collections
+                    for rec in members
+                    for ident in strong_identifiers(rec.identifiers)
+                )
+                if not subjects:
+                    continue
+                for system_id, collection, members in collections:
+                    # A mixed history collection is not a complete copy of
+                    # any one store.
+                    category = _category_from_hint(collection) if collection != "operational_record_history" else None
+                    if not category:
+                        continue
+                    coverages.append(SnapshotCoverage(
+                        evidence_id=file_id, system_id=system_id, data_category=category,
+                        physical_copy="primary", observed_at=snapshot_time, available_at=captured_at,
+                        resource_ids=frozenset(rec.resource_id for rec in members),
+                        subject_identifiers=subjects,
+                        provenance=f"snapshot_group:{collection}",
+                    ))
         return records
 
     raw_records = data.get("records")
@@ -1059,8 +1327,11 @@ def _parse_log_evidence(
             record_type,
         )
 
-        # Legacy support contact lookups are subject-owned contact records.
-        if system_id == "support_platform" and "contact_query" in event:
+        # Legacy support contact lookups are subject-owned contact records,
+        # and attachment scans/reads inspect a stored file, not the message.
+        if system_id == "support_platform" and (
+            "contact_query" in event or _is_attachment_event(fields)
+        ):
             category = "SUPPORT_ATTACHMENT"
         elif system_id == "analytics_platform" and (
             "contact_lookup" in event
@@ -1091,13 +1362,15 @@ def _parse_log_evidence(
                 state = "PRESENT"
         elif category == "SUPPORT_MESSAGE":
             if state != "ABSENT":
-                if event in ("message_pii_scan", "attachment_pii_scan", "attachment_scan_completed"):
+                if event == "message_pii_scan":
+                    state = "PRESENT"
+                elif raw_result.upper() == "IDENTIFIABLE":
                     state = "PRESENT"
                 elif _has_direct_pii(fields) or _text_ids(fields):
                     state = "PRESENT"
-                elif rows.isdigit() and int(rows) > 0:
-                    state = "PRESENT" if (_has_direct_pii(fields) or _text_ids(fields)) else "REDACTED"
                 else:
+                    # A row count without the record body is not proof of
+                    # redaction; _state_for_record returns UNKNOWN for it.
                     state = _state_for_record(category, fields, raw_result)
         elif category == "SUPPORT_ATTACHMENT":
             if state != "ABSENT":
@@ -1120,14 +1393,7 @@ def _parse_log_evidence(
                     state = "ACTIVE" if enabled == "true" else "DISABLED"
         elif category == "BACKUP_ARCHIVE":
             if state != "ABSENT":
-                block = _clean_value(fields.get("deletion_block")).lower()
-                allowed = _clean_value(fields.get("restore_allowed")).lower()
-                if allowed in ("true", "false"):
-                    state = "ACTIVE" if allowed == "true" else "BLOCKED"
-                elif block == "true":
-                    state = "BLOCKED"
-                elif block == "false" or _clean_value(fields.get("eligible")).lower() == "true":
-                    state = "ACTIVE"
+                state = _state_for_record(category, fields, raw_result)
         elif category == "USER_EXPORT":
             if state != "ABSENT":
                 available = _clean_value(fields.get("available")).lower()
@@ -1164,74 +1430,159 @@ def _parse_log_evidence(
     return records
 
 
+@dataclass(frozen=True)
+class CatalogLink:
+    """A LINK_RESOURCE_IDENTITY activity: resource, visible alias, and subject."""
+    activity_id: str
+    event_time: datetime
+    system_id: str
+    resource_id: str
+    alias: str
+    identifiers: frozenset
+    exclusive: bool
+    category_hint: str = ""
+
+
+_USER_REF_RE = re.compile(r"\buser_\d+\b", re.I)
+
+
+def catalog_links(activity_rows) -> list[CatalogLink]:
+    links: list[CatalogLink] = []
+    for row in activity_rows or ():
+        if str(row.get("event_type") or "") != "LINK_RESOURCE_IDENTITY":
+            continue
+        details = str(row.get("details") or "")
+        alias = re.search(r"\(([^()]+)\)", details)
+        ids = set(_EMAIL_RE.findall(details)) | set(_USER_REF_RE.findall(details))
+        links.append(CatalogLink(
+            activity_id=str(row.get("activity_id") or ""),
+            event_time=_parse_iso(str(row.get("event_time") or "")),
+            system_id=_normalize_system_id(str(row.get("target_system") or "")),
+            resource_id=str(row.get("resource_id") or "").strip(),
+            alias=alias.group(1).strip() if alias else "",
+            identifiers=frozenset(i.lower() for i in ids),
+            exclusive=bool(re.search(r"belongs only to|no other subject", details, re.I)),
+            category_hint=(
+                "SUPPORT_ATTACHMENT" if re.search(r"attachment", details, re.I)
+                else _category_from_hint(str(row.get("target_system") or ""), str(row.get("resource_id") or "")) or ""
+            ),
+        ))
+    return links
+
+
+def _alias_index(links: list[CatalogLink]) -> dict[str, CatalogLink]:
+    """Visible alias (file name, statement number, reference) -> catalog link."""
+    index: dict[str, CatalogLink] = {}
+    for link in links:
+        for key in (link.alias, Path(link.alias).stem if "." in link.alias else ""):
+            if key:
+                index.setdefault(key.lower(), link)
+    return index
+
+
+# Resource-id prefixes that name a record directly in documents.
+_RESOURCE_TOKEN_RE = re.compile(
+    r"\b(account|support|audit_record|export|search|analytics|legal_hold|tombstone|backup|data_flow|marketing)_\d+\b"
+)
+_PREFIX_SYSTEMS = {
+    "account": "account_service",
+    "support": "support_platform",
+    "audit_record": "security_service",
+    "export": "export_service",
+    "search": "search_service",
+    "analytics": "analytics_platform",
+    "legal_hold": "legal_service",
+    "tombstone": "identity_service",
+    "backup": "backup_service",
+    "data_flow": "integration_service",
+    "marketing": "marketing_platform",
+}
+_STATEMENT_RE = re.compile(r"\b[A-Z]{2,5}-\d{4}-\d{4}-\d{3,6}\b")
+_RETAIN_UNTIL_RE = re.compile(
+    r"retain until\s+(\d{1,2} [A-Z][a-z]{2} \d{4})(?:\s+(\d{2})\s*\n?\s*(\d{2}) UTC)?", re.I
+)
+
+
+def _document_date(match: re.Match) -> Optional[str]:
+    try:
+        value = datetime.strptime(match.group(1), "%d %b %Y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if match.group(2) and match.group(3):
+        value = value.replace(hour=int(match.group(2)), minute=int(match.group(3)))
+    return value.isoformat()
+
+
 def _parse_pdf_evidence(
     file_id: str,
     file_path: Path,
     origin: str,
     captured_at: datetime,
+    aliases: Optional[dict[str, CatalogLink]] = None,
 ) -> list[ObservedRecord]:
+    """Extract records a business document visibly names.
+
+    A record is created only for an explicit resource id printed in the
+    document, or for a printed reference (statement number) that the data
+    catalog maps to a resource.  The document's identifiers are attached so
+    the record can be connected to a subject; no subject is assumed.
+    """
     records: list[ObservedRecord] = []
     reader = pypdf.PdfReader(file_path)
     text = "\n".join(page.extract_text() for page in reader.pages)
+    lower = text.lower()
 
-    # 1. Delivery correction request (CS-4827 / support_001)
-    if "support_001" in text:
+    doc_ids = set(_EMAIL_RE.findall(text)) | set(_PHONE_RE.findall(text)) | set(_USER_REF_RE.findall(text))
+    is_attachment = "attachment properties" in lower or bool(re.search(r"\bfile\s+\S+\.(?:pdf|png|jpg)\b", lower))
+    retain = _RETAIN_UNTIL_RE.search(text)
+
+    targets: dict[tuple[str, str], dict[str, Any]] = {}
+    for token in dict.fromkeys(m.group(0) for m in _RESOURCE_TOKEN_RE.finditer(text)):
+        prefix = token.rsplit("_", 1)[0]
+        targets[(_PREFIX_SYSTEMS[prefix], token)] = {"source": "printed_resource_id"}
+    for reference in dict.fromkeys(_STATEMENT_RE.findall(text)):
+        link = (aliases or {}).get(reference.lower())
+        if link is not None:
+            targets.setdefault((link.system_id, link.resource_id), {"source": "catalog_alias", "alias": reference})
+
+    for (system_id, resource_id), details in targets.items():
+        if system_id == "support_platform":
+            category = "SUPPORT_ATTACHMENT" if is_attachment else "SUPPORT_MESSAGE"
+        else:
+            category = _category_from_hint(system_id, resource_id) or "UNKNOWN_CATEGORY"
+        details = dict(details)
+        if category == "SECURITY_AUDIT_LOG" and retain:
+            retained = _document_date(retain)
+            if retained:
+                details["retention_until"] = retained
+        identifiers = set(doc_ids)
+        if category == "SECURITY_AUDIT_LOG":
+            # A journal names its subject by reference only.
+            subject = re.search(r"subject reference\s+(user_\d+)", text, re.I)
+            identifiers = {subject.group(1)} if subject else set()
+            details["subject_reference"] = subject.group(1) if subject else ""
+        else:
+            for key, pattern in (("email", _EMAIL_RE), ("phone", _PHONE_RE)):
+                found = pattern.findall(text)
+                if found:
+                    details[key] = found[0]
         records.append(
-            ObservedRecord(
+            _make_record(
                 evidence_id=file_id,
                 file_path=file_path,
                 captured_at=captured_at,
                 origin=origin,
-                system_id="support_platform",
-                resource_id="support_001",
-                data_category="SUPPORT_ATTACHMENT",
+                system_id=system_id,
+                resource_id=resource_id,
+                category=category,
                 state="PRESENT",
-                has_exposed_pii=True,
-                identifiers={"priya.raman@gmail.com", "+91 98765 73142", "user_07", "Priya Raman"},
-                details={"title": "Delivery Address Correction Request", "support_ref": "CS-4827"},
-                provenance=f"pdf:{file_path.name}:support_001",
+                identifiers=identifiers,
+                details=details,
+                provenance=f"pdf:{file_path.name}:{resource_id}",
             )
         )
 
-    # 2. Account history report (user_18)
-    if "user_18" in text or "ingrid.dahl@outlook.com" in text:
-        records.append(
-            ObservedRecord(
-                evidence_id=file_id,
-                file_path=file_path,
-                captured_at=captured_at,
-                origin=origin,
-                system_id="account_service",
-                resource_id="statement_1842",
-                data_category="USER_PROFILE",
-                state="PRESENT",
-                has_exposed_pii=True,
-                identifiers={"user_18", "ingrid.dahl@outlook.com", "Ingrid Dahl"},
-                details={"statement": "NST-2026-0718-1842"},
-                provenance=f"pdf:{file_path.name}:user_18",
-            )
-        )
-
-    # 3. Compliance journal (audit_record_003 / user_03)
-    if "audit_record_003" in text or "user_03" in text:
-        records.append(
-            ObservedRecord(
-                evidence_id=file_id,
-                file_path=file_path,
-                captured_at=captured_at,
-                origin=origin,
-                system_id="security_service",
-                resource_id="audit_record_003",
-                data_category="SECURITY_AUDIT_LOG",
-                state="PRESENT",
-                has_exposed_pii=False,
-                identifiers={"user_03"},
-                details={"reference": "CJX-20260905-0630"},
-                provenance=f"pdf:{file_path.name}:audit_record_003",
-            )
-        )
-
-    # 4. General legal-hold register rows.  The register is a table; extract
+    # General legal-hold register rows.  The register is a table; extract
     # every row that carries an order reference and a retained-until date
     # rather than relying on a filename-specific branch.
     legal_row_re = re.compile(
@@ -1279,18 +1630,147 @@ def _parse_pdf_evidence(
     return records
 
 
+_IMAGE_STATES = {"PRESENT", "ABSENT", "REDACTED", "ANONYMIZED", "ACTIVE", "DISABLED", "BLOCKED"}
+
+
+def _resolve_visible_resource(
+    observation: dict[str, Any],
+    aliases: dict[str, CatalogLink],
+) -> Optional[tuple[str, str, Optional[CatalogLink]]]:
+    """Map what the screen shows to a catalogued (system, resource) pair.
+
+    The model transcribes visible facts; it does not get to mint resource ids.
+    A file name, statement number or visible reference resolves through the
+    data catalog.  Otherwise the resource id must be printed on the screen.
+    """
+    details = observation.get("details") or {}
+    visible = str(details.get("visible_text") or "")
+    resource_id = str(observation.get("resource_id") or "").strip()
+    system_id = _normalize_system_id(str(observation.get("system_id") or ""))
+    file_name = str(details.get("file_name") or "").strip()
+
+    # File names identify a stored object wherever it is browsed; other
+    # visible references only resolve within the same system.
+    candidates = [(file_name, True), (Path(file_name).stem if file_name else "", True), (resource_id, False)]
+    candidates += [(ref, False) for ref in _STATEMENT_RE.findall(visible)]
+    candidates += [(m.group(0), False) for m in _USER_REF_RE.finditer(visible)]
+    for candidate, is_file in candidates:
+        link = aliases.get(candidate.lower()) if candidate else None
+        if link is not None and (is_file or link.system_id == system_id):
+            return link.system_id, link.resource_id, link
+    # A file name is not a resource id: without a catalog entry the object
+    # cannot be named, so it is not turned into an export record.
+    if file_name and resource_id == Path(file_name).stem:
+        return None
+    if resource_id and re.search(rf"(?<![A-Za-z0-9_]){re.escape(resource_id)}(?![A-Za-z0-9_])", visible):
+        return system_id, resource_id, None
+    return None
+
+
+_RESTORE_CONTROL = re.compile(r"restor", re.I)
+_FLOW_CONTROL = re.compile(r"sync|connector|deliver|enabled|status|mode", re.I)
+_ON_VALUES = {"allowed", "allow", "enabled", "on", "yes", "true", "active", "running", "available",
+              "healthy", "continuous", "continuous sync", "live", "streaming"}
+_OFF_VALUES = {"blocked", "denied", "deny", "disabled", "off", "no", "false", "stopped", "paused", "unavailable"}
+
+
+def _control_state(controls: dict[str, str], pattern: re.Pattern, on: str, off: str) -> str:
+    for label, value in controls.items():
+        if not pattern.search(label):
+            continue
+        v = str(value).strip().lower()
+        if v in _ON_VALUES:
+            return on
+        if v in _OFF_VALUES:
+            return off
+    return ""
+
+
+def _interpret_visible_observation(
+    observation: dict[str, Any],
+    aliases: dict[str, CatalogLink],
+) -> list[tuple[str, str, Optional[CatalogLink], str, str, set[str], dict[str, Any]]]:
+    """Derive (system, resource, link, category, state, ids, details) from visible facts.
+
+    Used for image-v2 cache entries, where the model only transcribed what the
+    screen shows.  Resource ids come from printed ids or catalog aliases;
+    category from the catalog entry, the screen's record label or the
+    resource prefix; state from visible controls and visible identifiers.
+    """
+    idents = observation.get("identifiers") or {}
+    ids = {str(v) for key in ("emails", "phones", "user_ids", "names") for v in idents.get(key, []) if str(v).strip()}
+    direct = any(idents.get(key) for key in ("emails", "phones", "names"))
+    record_type = str(observation.get("record_type") or "")
+    controls = {str(k): str(v) for k, v in (observation.get("visible_controls") or {}).items()}
+
+    # One observation is one record.  A catalog alias names it directly;
+    # otherwise the first printed resource id is the record's own id and any
+    # later ids on the same screen are references to other records.
+    targets: dict[tuple[str, str], Optional[CatalogLink]] = {}
+    printed = [str(v).strip() for v in observation.get("visible_resource_ids") or []]
+    for alias in [str(a).strip() for a in observation.get("visible_aliases") or []] + printed:
+        link = aliases.get(alias.lower()) or aliases.get(Path(alias).stem.lower())
+        if link is not None and link.alias.lower() != link.resource_id.lower():
+            targets.setdefault((link.system_id, link.resource_id), link)
+    if not targets:
+        for rid in printed:
+            match = _RESOURCE_TOKEN_RE.fullmatch(rid)
+            if match:
+                targets[(_PREFIX_SYSTEMS[match.group(1)], rid)] = aliases.get(rid.lower())
+                break
+
+    results = []
+    for (system_id, resource_id), link in targets.items():
+        category = (
+            (link.category_hint if link is not None else "")
+            or _category_from_hint(record_type, resource_id)
+            or _category_from_hint(system_id, resource_id)
+        )
+        if category not in _ALL_CATEGORIES and category != "DATA_FLOW":
+            continue
+        if category == "BACKUP_ARCHIVE":
+            # An archive listed with no visible restore restriction can be
+            # restored, as for catalog rows without a restore_allowed field.
+            state = _control_state(controls, _RESTORE_CONTROL, "ACTIVE", "BLOCKED") or "ACTIVE"
+        elif category == "DATA_FLOW":
+            state = _control_state(controls, _FLOW_CONTROL, "ACTIVE", "DISABLED")
+        elif category == "ACCOUNT_TOMBSTONE":
+            state = "PRESENT" if direct else "REDACTED"
+        elif category in ("ANALYTICS_PROFILE", "PRODUCT_TELEMETRY"):
+            state = "PRESENT" if direct or any(i.lower().startswith("user_") for i in ids) else "ANONYMIZED"
+        else:
+            state = "PRESENT"
+        if not state:
+            continue  # a control we cannot read is not evidence of either state
+        details = {
+            "visible_text": observation.get("visible_text"),
+            "record_type": record_type,
+            "visible_controls": controls,
+            "visible_timestamps": observation.get("visible_timestamps") or [],
+            "confidence": observation.get("confidence"),
+            "limitations": observation.get("limitations"),
+        }
+        results.append((system_id, resource_id, link, category, state, ids, details))
+    return results
+
+
 def _parse_image_evidence(
     file_id: str,
     file_path: Path,
     origin: str,
     captured_at: datetime,
+    aliases: Optional[dict[str, CatalogLink]] = None,
 ) -> list[ObservedRecord]:
     """Read the actual image bytes and load only a SHA-matching cache entry.
 
     The cache contains Gemini-derived observations with source provenance.  It
     contains no deletion statuses or remediation sequences.  A changed image
-    invalidates the entry; no stale observation is reused.
+    invalidates the entry; no stale observation is reused.  Resource ids are
+    derived here from visible values and catalog aliases: image-v2 entries
+    hold visible facts only; image-v1 entries carry model-normalized fields
+    that are re-validated against what the screen shows.
     """
+    aliases = aliases or {}
     records: list[ObservedRecord] = []
     source_bytes = file_path.read_bytes()
     cache = load_media_cache(strict=True)
@@ -1298,23 +1778,35 @@ def _parse_image_evidence(
         file_id, source_bytes, cache=cache, strict=True
     )
     source_sha = hashlib.sha256(source_bytes).hexdigest()
+    normalized = []
     for observation in observations:
         if not isinstance(observation, dict):
+            raise EvidenceParseError(f"{file_id}: media observation is not an object")
+        if "system_id" not in observation and "visible_text" in observation:
+            normalized.extend(_interpret_visible_observation(observation, aliases))
             continue
-        resource_id = str(observation.get("resource_id") or "").strip()
-        system_id = str(observation.get("system_id") or "").strip()
         category = str(observation.get("data_category") or "").strip()
         state = str(observation.get("state") or "").strip()
-        if not resource_id or not system_id or not category or not state:
+        if category not in _ALL_CATEGORIES and category != "DATA_FLOW":
+            raise EvidenceParseError(f"{file_id}: media cache category {category!r} is not a policy category")
+        if state not in _IMAGE_STATES:
+            raise EvidenceParseError(f"{file_id}: media cache state {state!r} is not an allowed state")
+        resolved = _resolve_visible_resource(observation, aliases)
+        if resolved is None:
             continue
-        identifiers = {
-            str(value)
-            for value in (observation.get("identifiers") or [])
-            if str(value).strip()
-        }
-        details = dict(observation.get("details") or {})
+        system_id, resource_id, link = resolved
+        identifiers = {str(v) for v in (observation.get("identifiers") or []) if str(v).strip()}
+        normalized.append((system_id, resource_id, link, category, state, identifiers,
+                           dict(observation.get("details") or {})))
+
+    for system_id, resource_id, link, category, state, identifiers, details in normalized:
         details.setdefault("source_sha256", source_sha)
         details.setdefault("source_path", str(file_path))
+        if link is not None:
+            details["catalog_activity_id"] = link.activity_id
+            details["visible_alias"] = link.alias
+            if link.exclusive:
+                details["belongs_only_to_subject"] = True
         records.append(
             ObservedRecord(
                 evidence_id=file_id,
@@ -1325,13 +1817,10 @@ def _parse_image_evidence(
                 resource_id=resource_id,
                 data_category=category,
                 state=state,
-                has_exposed_pii=bool(observation.get("has_exposed_pii")),
+                has_exposed_pii=_pii_for(category, details, state),
                 identifiers=identifiers,
                 details=details,
-                provenance=str(
-                    observation.get("provenance")
-                    or f"media_cache:{file_id}:{resource_id}"
-                ),
+                provenance=f"media_cache:{file_id}:{resource_id}",
             )
         )
     return records
@@ -1344,17 +1833,34 @@ def _parse_image_evidence(
 class EvidenceCorpus:
     """Indexed collection of all observed evidence records across systems."""
 
-    def __init__(self, records: list[ObservedRecord]):
+    def __init__(
+        self,
+        records: list[ObservedRecord],
+        coverages: Optional[list[SnapshotCoverage]] = None,
+        links: Optional[list[CatalogLink]] = None,
+    ):
         self.records: list[ObservedRecord] = records
+        self.coverages: list[SnapshotCoverage] = list(coverages or [])
+        self.catalog_links: list[CatalogLink] = list(links or [])
         self._by_identifier: dict[str, list[ObservedRecord]] = {}
         self._by_resource: dict[str, list[ObservedRecord]] = {}
+        self._by_key: dict[tuple[str, str], list[ObservedRecord]] = {}
 
         for rec in records:
-            # Index by resource_id
             self._by_resource.setdefault(rec.resource_id, []).append(rec)
-            # Index by identifiers
+            self._by_key.setdefault((rec.system_id, rec.resource_id), []).append(rec)
             for ident in rec.normalized_identifiers:
                 self._by_identifier.setdefault(ident, []).append(rec)
+
+    def records_for(self, system_id: str, resource_id: str) -> list[ObservedRecord]:
+        return list(self._by_key.get((system_id, resource_id), []))
+
+    def records_with_identifiers(self, identifiers) -> list[ObservedRecord]:
+        seen: dict[int, ObservedRecord] = {}
+        for ident in {str(i).strip().lower() for i in identifiers}:
+            for rec in self._by_identifier.get(ident, []):
+                seen[id(rec)] = rec
+        return list(seen.values())
 
     def get_records_for_identifiers(
         self,
@@ -1362,40 +1868,29 @@ class EvidenceCorpus:
         audit_at: datetime,
         not_before: Optional[datetime] = None,
     ) -> list[ObservedRecord]:
-        """Return records matching any identifier captured in the allowed window.
+        """Return admissible records of every resource an identifier links to.
 
-        ``audit_at`` is the hard upper bound. ``not_before`` optionally excludes
-        evidence that predates the deletion request: such a capture describes an
-        earlier state and cannot prove the post-request state.
+        ``audit_at`` bounds both the observation and the file availability.
+        ``not_before`` optionally excludes evidence that predates the deletion
+        request: such a capture describes an earlier state and cannot prove
+        the post-request state.
         """
         if audit_at.tzinfo is None:
             raise ValueError(f"audit_at must be timezone-aware: {audit_at!r}")
         if not_before is not None and not_before.tzinfo is None:
             raise ValueError(f"not_before must be timezone-aware: {not_before!r}")
 
-        matched: list[ObservedRecord] = []
-        # A resource can have multiple categories at the same timestamp (for
-        # example a support message and its attachment).  Category is part of
-        # the observation identity and must not be collapsed here.
-        seen_keys: set[tuple[str, str, datetime, str]] = set()
-        normalized_ids = {ident.strip().lower() for ident in identifiers}
-        linked_resources: set[tuple[str, str]] = set()
-
-        for rec in self.records:
-            if rec.captured_at <= audit_at and rec.normalized_identifiers & normalized_ids:
-                linked_resources.add((rec.system_id, rec.resource_id))
-
-        for system_id, resource_id in linked_resources:
-            for rec in self._by_resource.get(resource_id, []):
-                if rec.system_id != system_id or rec.captured_at > audit_at:
-                    continue
-                if not_before is not None and rec.captured_at < not_before:
-                    continue
-                k = (rec.system_id, rec.resource_id, rec.captured_at, rec.data_category)
-                if k not in seen_keys:
-                    seen_keys.add(k)
-                    matched.append(rec)
-
+        linked_resources = {
+            (rec.system_id, rec.resource_id)
+            for rec in self.records_with_identifiers(identifiers)
+            if rec.admissible(audit_at)
+        }
+        matched = [
+            rec
+            for key in linked_resources
+            for rec in self._by_key.get(key, [])
+            if rec.admissible(audit_at, not_before)
+        ]
         matched.sort(key=lambda r: r.captured_at, reverse=True)
         return matched
 
@@ -1407,22 +1902,31 @@ class EvidenceCorpus:
     ) -> list[ObservedRecord]:
         if audit_at.tzinfo is None:
             raise ValueError("audit_at must be timezone-aware")
-        recs = [
-            r for r in self._by_resource.get(resource_id, [])
-            if r.captured_at <= audit_at
-            and (not_before is None or r.captured_at >= not_before)
-        ]
+        recs = [r for r in self._by_resource.get(resource_id, []) if r.admissible(audit_at, not_before)]
         recs.sort(key=lambda r: r.captured_at, reverse=True)
         return recs
 
 
 def load_evidence_corpus(dataset_dir: Path) -> EvidenceCorpus:
-    """Parse all 94 evidence files defined in dataset/evidence_files.csv."""
+    """Parse every evidence file listed in dataset/evidence_files.csv.
+
+    Catalog links from system_activity.csv are read first so visible aliases
+    (file names, statement numbers, references) resolve to catalogued
+    resources.  Every record and coverage carries the manifest capture time
+    as its availability time.
+    """
     manifest_path = dataset_dir / "evidence_files.csv"
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = list(csv.DictReader(f))
+    activity_path = dataset_dir / "system_activity.csv"
+    links: list[CatalogLink] = []
+    if activity_path.exists():
+        with open(activity_path, "r", encoding="utf-8", newline="") as f:
+            links = catalog_links(csv.DictReader(f))
+    aliases = _alias_index(links)
 
     all_records: list[ObservedRecord] = []
+    all_coverages: list[SnapshotCoverage] = []
 
     for row in manifest:
         file_id = row["file_id"].strip()
@@ -1431,22 +1935,27 @@ def load_evidence_corpus(dataset_dir: Path) -> EvidenceCorpus:
         captured_at = _parse_iso(row["captured_at"])
         full_path = dataset_dir / rel_path
         ext = full_path.suffix.lower()
+        coverages: list[SnapshotCoverage] = []
 
         if ext == ".sql":
-            all_records.extend(_parse_sql_evidence(file_id, full_path, origin, captured_at))
+            parsed = _parse_sql_evidence(file_id, full_path, origin, captured_at, coverages)
         elif ext == ".json":
-            all_records.extend(_parse_json_evidence(file_id, full_path, origin, captured_at))
+            parsed = _parse_json_evidence(file_id, full_path, origin, captured_at, coverages)
         elif ext == ".txt":
-            all_records.extend(_parse_text_handover_evidence(file_id, full_path, origin, captured_at))
+            parsed = _parse_text_handover_evidence(file_id, full_path, origin, captured_at)
         elif ext == ".log":
-            all_records.extend(_parse_log_evidence(file_id, full_path, origin, captured_at))
+            parsed = _parse_log_evidence(file_id, full_path, origin, captured_at)
         elif ext == ".pdf":
-            all_records.extend(_parse_pdf_evidence(file_id, full_path, origin, captured_at))
+            parsed = _parse_pdf_evidence(file_id, full_path, origin, captured_at, aliases)
         elif ext == ".png":
-            all_records.extend(_parse_image_evidence(file_id, full_path, origin, captured_at))
+            parsed = _parse_image_evidence(file_id, full_path, origin, captured_at, aliases)
         else:
             raise EvidenceParseError(
                 f"{file_id}: unsupported evidence format {ext or '<none>'} for {rel_path}"
             )
+        for rec in parsed:
+            rec.available_at = captured_at
+        all_records.extend(parsed)
+        all_coverages.extend(replace(c, available_at=captured_at) for c in coverages)
 
-    return EvidenceCorpus(all_records)
+    return EvidenceCorpus(all_records, all_coverages, links)

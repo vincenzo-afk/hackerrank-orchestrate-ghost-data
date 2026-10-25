@@ -197,24 +197,22 @@ class TestCE4TombstonePolicy:
 
 
 class TestCE5ResourceLinks:
-    def test_source_resource_adds_future_verification_not_proof(self):
+    def test_activity_linked_account_adds_future_verification_not_proof(self):
+        from activity_linker import ResourceLink
+
         search = record(
             "search_service", "search_900", "SEARCH_INDEX_ENTRY", "PRESENT",
             "2026-06-05T10:00:00Z", "evidence_search", pii=True,
         )
-        search.details["source_resource_id"] = "account_900"
-        activity = [{
-            "activity_id": "activity_test",
-            "event_time": "2026-06-05T11:00:00Z",
-            "event_type": "DELETE_RECORD",
-            "source_system": "deletion_worker",
-            "target_system": "account_service",
-            "resource_id": "account_900",
-            "reported_result": "SUCCESS",
-            "details": "Deletion worker reported completion.",
-        }]
-        result = audit(
-            [search], audit_at="2026-06-10T00:00:00Z", system_activity=activity
+        result = reconstruct_case_state(
+            case_id="ce_case",
+            audit_at=_parse_iso("2026-06-10T00:00:00Z"),
+            is_deletion=True,
+            user_identifiers=IDS,
+            corpus=EvidenceCorpus([search]),
+            require_evidence=True,
+            not_before=_parse_iso("2026-06-01T00:00:00Z"),
+            links=[ResourceLink("account_service", "account_900", "USER_PROFILE", "activity", "activity_test")],
         )
         linked = next(s for s in result.steps if s.resource_id == "account_900")
         assert result.deletion_status == "INCOMPLETE"
