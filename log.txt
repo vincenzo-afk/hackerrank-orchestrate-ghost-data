@@ -123,15 +123,15 @@ parent_agent=none
 ## 2026-10-24T19:12:00Z Remote Config & Continuous Push Setup
 
 User Prompt (verbatim, secrets redacted):
-https://github.com/vincenzo-afk/hackerrank-orchestrate-ghost-data.git and push everything after everytme to this link using my identity only... everytime ... do multiple pushes ... evreytime
+https://github.com/[REDACTED_GITHUB_ACCOUNT]/hackerrank-orchestrate-ghost-data.git and push everything after everytme to this link using my identity only... everytime ... do multiple pushes ... evreytime
 
 Agent Response Summary:
-Configured the primary git remote origin to https://github.com/vincenzo-afk/hackerrank-orchestrate-ghost-data.git and preserved the original challenge upstream remote. Verified and locked local git author identity to vincenzo-afk (itsmebk2007@gmail.com) per user instruction. Created .gitignore to prevent bytecode and cache files from polluting version control. Staged all foundation code, tests, evaluation audit notes, and log.txt, committed under the user's identity, and pushed to origin main.
+Configured the primary git remote origin to https://github.com/[REDACTED_GITHUB_ACCOUNT]/hackerrank-orchestrate-ghost-data.git and preserved the original challenge upstream remote. Verified and locked local git author identity to [REDACTED_GITHUB_ACCOUNT] ([REDACTED_EMAIL]) per user instruction. Created .gitignore to prevent bytecode and cache files from polluting version control. Staged all foundation code, tests, evaluation audit notes, and log.txt, committed under the user's identity, and pushed to origin main.
 
 Actions:
 * Added .gitignore
-* Reconfigured git remote: origin -> https://github.com/vincenzo-afk/hackerrank-orchestrate-ghost-data.git
-* Set git config user.name "vincenzo-afk", user.email "itsmebk2007@gmail.com"
+* Reconfigured git remote: origin -> https://github.com/[REDACTED_GITHUB_ACCOUNT]/hackerrank-orchestrate-ghost-data.git
+* Set git config user.name "[REDACTED_GITHUB_ACCOUNT]", user.email "[REDACTED_EMAIL]"
 * Appended turn entry to log.txt
 * Committed changes and pushed to origin/main
 
@@ -363,18 +363,39 @@ Parent Agent: none
 Language: py
 Time Remaining: not configured
 
+## [2026-10-25T10:50:00+05:30] Adversarial repository audit
+
+User Prompt (verbatim, secrets redacted):
+Codex Mission: Deep Adversarial Audit and Final Improvement of Ghost Data Still Exists. Audit the repository independently, preserve the candidate, verify evidence/policy/output/cache/security/deliverables, fix confirmed defects with regression tests, and report initial findings before high-impact changes. Do not make network/API calls, expose revoked credentials, commit, push, upload, or submit.
+
+Agent Response Summary:
+Captured the baseline commit, remotes, status, and artifact hashes before changing code. Ran the public evaluator and tests, found and fixed a temporal provenance defect where an in-window identity link could relabel a pre-request observation, and added a regression test. Produced the adversarial-audit report; root output.csv and code.zip remain unchanged.
+
+Actions:
+* Inspected authoritative specifications, implementation, archive contents, static secret-pattern paths, tests, and evaluator.
+* Edited code/state_reconstruction.py, code/tests/test_evidence_and_state.py, and code/evaluation/final_adversarial_audit.md.
+* Ran pytest with a workspace base temp and ran code/evaluation/main.py; no network/API call was made.
+
+Context:
+tool=Codex
+model=GPT-5
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
 ## [2026-10-25T00:05:00+05:30] Push repository to GitHub origin under user identity
 
 User Prompt (verbatim, secrets redacted):
 PUSH THIS TO GITHUB USING MY IDENTITY
 
 Agent Response Summary:
-Configured git credential helper to prioritize the local credential store, resolving interactive authentication blocks. Checked out the MIT LICENSE from the remote origin commit and staged all final deliverables: pipeline implementation, 92-test suite, evaluation report, token usage report, output.csv, requirements.txt, and code.zip. Committed the completed deletion-audit agent under user identity vincenzo-afk (itsmebk2007@gmail.com) and pushed cleanly to origin main.
+Configured git credential helper to prioritize the local credential store, resolving interactive authentication blocks. Checked out the MIT LICENSE from the remote origin commit and staged all final deliverables: pipeline implementation, 92-test suite, evaluation report, token usage report, output.csv, requirements.txt, and code.zip. Committed the completed deletion-audit agent under user identity [REDACTED_GITHUB_ACCOUNT] ([REDACTED_EMAIL]) and pushed cleanly to origin main.
 
 Actions:
 * Configured local git credential helper store override in .git/config
 * Checked out LICENSE from origin/main
-* Verified git identity: vincenzo-afk <itsmebk2007@gmail.com>
+* Verified git identity: [REDACTED_GITHUB_ACCOUNT] <[REDACTED_EMAIL]>
 * Appended SESSION START and per-turn entries to log.txt
 * Committed all deliverables to git
 * Pushed main branch to origin/main on GitHub
@@ -579,7 +600,7 @@ User Prompt (verbatim, secrets redacted):
 DO A CHECK ONE TIME NOW AND PUSH EVERYTHING ...
 
 Agent Response Summary:
-Executed full end-to-end verification checks across test suite (92/92 passed), pipeline execution (518 evaluation rows produced deterministically), evaluator/contract validation (0 errors, 29/32 sample statuses, precision 1.0, recall 0.8601, F1 0.9248), and submission package archive integrity (13 files in code.zip matching SHA-256). Appended turn log entry and confirmed repository status. Pushed verified commits and updated log to GitHub remote origin under user identity vincenzo-afk (itsmebk2007@gmail.com).
+Executed full end-to-end verification checks across test suite (92/92 passed), pipeline execution (518 evaluation rows produced deterministically), evaluator/contract validation (0 errors, 29/32 sample statuses, precision 1.0, recall 0.8601, F1 0.9248), and submission package archive integrity (13 files in code.zip matching SHA-256). Appended turn log entry and confirmed repository status. Pushed verified commits and updated log to GitHub remote origin under user identity [REDACTED_GITHUB_ACCOUNT] ([REDACTED_EMAIL]).
 
 Actions:
 * Ran: python -X utf8 -m pytest code/tests -q (92 passed, exit 0)
@@ -676,7 +697,7 @@ If no further safe scoring improvements exist, explain what you investigated and
 AND PUSH ANY WORK U DO IN GITHUB USING MY IDENTITY
 
 Agent Response Summary:
-Verified the record-level `recorded_at` defect, applied the minimal precedence-preserving parser fix, and added eight regression tests. The correction changes exactly 25 rows, including `case_342`, `case_390`, and `case_484` flipping from INCOMPLETE to COMPLETE, while all 32 public-sample metrics remain unchanged. Ran 100 tests, the evaluator (0 contract errors), and two deterministic pipeline runs; rebuilt `code.zip` and validated it from a clean extraction with the dataset. Pushed the accepted code, documentation, output, and package commits to origin/main under the configured vincenzo-afk identity.
+Verified the record-level `recorded_at` defect, applied the minimal precedence-preserving parser fix, and added eight regression tests. The correction changes exactly 25 rows, including `case_342`, `case_390`, and `case_484` flipping from INCOMPLETE to COMPLETE, while all 32 public-sample metrics remain unchanged. Ran 100 tests, the evaluator (0 contract errors), and two deterministic pipeline runs; rebuilt `code.zip` and validated it from a clean extraction with the dataset. Pushed the accepted code, documentation, output, and package commits to origin/main under the configured [REDACTED_GITHUB_ACCOUNT] identity.
 
 Actions:
 * Read: AGENTS.md, README.md, problem_statement.md, agent_trace_instructions.md, evidence parser/state reconstruction/tests/reports
@@ -689,7 +710,7 @@ Actions:
 * Ran: python -X utf8 code/evaluation/main.py (exit 0; 518 rows, 2,823 steps, 150/358/10 statuses, 0 errors, sample metrics unchanged)
 * Rebuilt: code.zip (14 files, 55,513 bytes, SHA-256 941bb4ba703a4814bcfd97e40e418c984a1326ffd3afbd49c3fb0586daed05a4)
 * Verified: clean extraction, 100 tests, 518-row pipeline, evaluator 0 errors, identical output hash
-* Committed/pushed: 696cdec (parser+tests), 87c9a86 (docs), e7198e6 (output+package) to origin/main as vincenzo-afk <itsmebk2007@gmail.com>
+* Committed/pushed: 696cdec (parser+tests), 87c9a86 (docs), e7198e6 (output+package) to origin/main as [REDACTED_GITHUB_ACCOUNT] <[REDACTED_EMAIL]>
 * Not created: agent-trace.zip (active sessions; no copying)
 
 Context:
@@ -706,14 +727,14 @@ User Prompt (verbatim, secrets redacted):
 PUSH EVERYTHING TO GITHUB ...
 
 Agent Response Summary:
-Verified the state of the repository, tests (100 passed), contract evaluator (0 errors across 518 cases), and git origin synchronization. Appended the turn audit entry to log.txt, committed under identity vincenzo-afk (itsmebk2007@gmail.com), and pushed to origin/main on GitHub.
+Verified the state of the repository, tests (100 passed), contract evaluator (0 errors across 518 cases), and git origin synchronization. Appended the turn audit entry to log.txt, committed under identity [REDACTED_GITHUB_ACCOUNT] ([REDACTED_EMAIL]), and pushed to origin/main on GitHub.
 
 Actions:
 * Ran: python -X utf8 -m pytest code/tests -q (100 passed, exit 0)
 * Ran: python -X utf8 code/evaluation/main.py (exit 0, 518 rows, 0 contract errors)
 * Verified: git ls-remote origin refs/heads/main and git status
 * Appended turn entry to log.txt
-* Committed log.txt update under user identity vincenzo-afk <itsmebk2007@gmail.com>
+* Committed log.txt update under user identity [REDACTED_GITHUB_ACCOUNT] <[REDACTED_EMAIL]>
 * Pushed main branch to origin/main on GitHub
 
 Context:
@@ -794,7 +815,7 @@ unsupported citations were found. The public sample remains 29/32 status,
 clean-extraction tests and evaluation passed with output f5b6.
 
 Actions:
-* Backed up the frozen candidate to C:\Users\S K\AppData\Local\Temp\final_audit_20261025-091628
+* Backed up the frozen candidate to C:\Users\[REDACTED_USER]\AppData\Local\Temp\final_audit_20261025-091628
 * Inspected all 11 source PNGs and the six audit rows; verified case_45 additions
 * Audited all 15 policy rules and corrected explicit-false fail-closed behavior
 * Added policy fail-closed regression coverage; total 127 passed, 1 skipped
@@ -819,7 +840,7 @@ User Prompt (verbatim, secrets redacted):
 PUSH EVRYTHING TO GITHUB
 
 Agent Response Summary:
-Committed the verified candidate in six logical commits and pushed them to the configured origin/main under vincenzo-afk. The pushed tree contains the policy engine, Gemini-derived media cache, official Gemini extractor, legal-PDF extraction, deterministic LF output, tests, updated reports, final output.csv, log.txt, and code.zip. agent-trace.zip remains absent and was not fabricated; the AI interview remains external and unconfirmed.
+Committed the verified candidate in six logical commits and pushed them to the configured origin/main under [REDACTED_GITHUB_ACCOUNT]. The pushed tree contains the policy engine, Gemini-derived media cache, official Gemini extractor, legal-PDF extraction, deterministic LF output, tests, updated reports, final output.csv, log.txt, and code.zip. agent-trace.zip remains absent and was not fabricated; the AI interview remains external and unconfirmed.
 
 Actions:
 * Reviewed Git status, identity, remote, diff, and secret absence
@@ -827,6 +848,379 @@ Actions:
 * Pushed origin/main e7d92c6..8cffe0a
 * Appended this log entry and pushed the final log commit
 * Not included: dataset (not tracked), agent-trace.zip (missing), API keys/credentials
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+## [2026-10-25T00:00:00+05:30] SESSION START
+
+tool=Codex
+model=GPT-5
+Repo Root: D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+Branch: main
+Worktree: main
+Parent Agent: none
+Language: py
+Time Remaining: not configured
+## [2026-10-25T11:00:00+05:30] Failure propagation and package verification
+
+User Prompt (verbatim, secrets redacted):
+Broad exception handling: inspect whether exceptions are swallowed and pipeline failures can still produce apparently valid output. Add explicit failure propagation and tests.
+
+Clean-extraction test: extract code.zip into a fresh directory and run the documented commands there. This has not been verified.
+
+Agent trace: validate agent-trace.zip against the official trace instructions. Do not treat a generated transcript as a genuine tool-session trace unless the rules permit it.
+
+Final submission check: confirm required filenames, artifact hashes, and submission instructions.
+
+Agent Response Summary:
+Removed silent production fallbacks, made reconstruction errors propagate with case context, and added tests proving no output is written after a failed audit. Verified the existing archive in a fresh directory; it passes but is stale because it does not include this session's source changes. agent-trace.zip is absent and was not fabricated.
+
+Actions:
+* Edited code/main.py, code/tests/test_foundation.py, and code/evaluation/final_adversarial_audit.md.
+* Ran the full source tests, clean-extraction entry point/tests/evaluator, and artifact validation.
+
+Context:
+tool=Codex
+model=GPT-5
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
+## [2026-10-25T11:11:07+05:30] Final submission readiness audit and package rebuild
+
+User Prompt (summary; no secret reproduced):
+Run a final submission-readiness audit: confirm the authoritative repository
+rules, rebuild code.zip from the intended source, verify the packaged artifact
+from a fresh external extraction, scan for secrets and personal information,
+recheck reports and hashes, assess the agent trace and AI interview, and report
+READY or NOT READY. Do not commit, push, upload, or submit.
+
+Agent Response Summary:
+Rebuilt the submission archive from the final source after removing generated
+temporary directories and caches. Updated the README and evaluation reports to
+the final measured state: 130 passed, 1 skipped; source pipeline 6.375 s (repeat
+6.448 s) and evaluator zero errors. The rebuilt archive has 25 files and SHA-256
+a64b98836c92c7d4d4bd9b0bf3722ede34a68e9a6e48470c7121b0469fe94d5a. A fresh
+extraction outside the repository, with a copied participant dataset, exited
+zero for the documented entry point, both full test runs, and the evaluator.
+It generated a byte-identical 564,902-byte output with SHA-256
+f5b6f1ebabb0e56834a881007ad91f6080302778bec31b1ad42d1c582d6a04e4, 518 rows
+and 2,828 steps. Targeted failure-propagation and temporal-link regressions
+passed. The archive contains no dataset, caches, nested archives, credentials,
+or absolute paths. The log's real personal identifiers were redacted with an
+external backup; no credential value was printed or reused. agent-trace.zip
+remains absent because the active Qoder and Antigravity sessions cannot be
+closed from inside this session; no synthetic trace was created. The AI
+interview and media-cache permission remain external or unresolved. No commit,
+push, upload, or submission was performed.
+
+Actions:
+* Removed only generated temp/cache directories: .clean-extraction-audit,
+  .pytest-failure-propagation, .pytest_cache, and code/__pycache__ trees.
+* Updated README.md, code/evaluation/evaluation_report.md,
+  code/evaluation/usage_report.md, and code/evaluation/final_adversarial_audit.md
+  to the final 130/1 test result, measured runtime, and failure-propagation fix.
+* Rebuilt code.zip atomically from README.md and the final code tree, excluding
+  dataset, generated caches, temp directories, secrets, and nested archives.
+* Extracted the exact archive outside the repository and copied the participant
+  dataset into the extraction. Ran code/main.py twice, pytest code/tests, the
+  evaluator, and the targeted failure-propagation/temporal-link regressions.
+* Independently checked the output header, 518 sorted unique rows, seven-field
+  steps, consecutive step_no values, and total step count.
+* Scanned the archive and root deliverables for credential patterns, absolute
+  paths, personal-identity matches, caches, and nested archives. Redacted 8
+  personal-email, 13 account-handle, and 1 home-path occurrences from log.txt
+  using a scripted byte-preserving replacement and an external backup.
+* Created submission_manifest.sha256 after this entry for the present required
+  deliverables.
+* Not performed: commit, push, upload, competition submission, agent-trace.zip
+  creation, or AI-interview completion.
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
+## [2026-10-25T11:21:04+05:30] Final trace-policy audit and package refresh
+
+User Prompt (summary; no secret reproduced):
+Resolve the remaining submission blockers: determine the exact trace
+requirements and recover genuine completed challenge-session traces from
+Qoder, Antigravity, Codex, and OpenCode; sanitize without altering provenance;
+build agent-trace.zip only if the content is complete; investigate whether the
+Gemini-derived media cache is permitted with exact rule citations; rebuild and
+re-verify any changed artifacts; do not commit, push, upload, submit, or perform
+the AI interview.
+
+Agent Response Summary:
+Read the official trace and packaging instructions. Confirmed challenge matches
+for the current Qoder JSONL, two Antigravity brain folders, and the October 25
+Codex rollout; the OpenCode process is active. Qoder cannot be closed from
+inside this session, and Antigravity and OpenCode are also running, so no
+completed genuine trace set exists; no session files were copied and
+agent-trace.zip was not built. Resolved the media-cache question by rule
+citation: problem_statement.md explicitly encourages caching; AGENTS.md section
+6.9 prohibits dataset/, dependency caches, nested archives, credentials, real
+personal data, and sensitive configuration. The derived cache is outside
+dataset/, is not a dependency cache, and contains no organizer truth or
+credentials; this is a rules-based conclusion, not organizer sign-off. Updated
+the evaluation and audit reports, rebuilt code.zip with SHA-256
+7e7d3354eb0fad875156d023ef3f74647dbbeefccdcb8b2a370e7712afc52fba, and
+re-verified from a fresh external extraction: 130 passed, 1 skipped, evaluator
+zero errors, and output f5b6f1ebabb0e56834a881007ad91f6080302778bec31b1ad42d1c582d6a04e4.
+No code behavior changed.
+
+Actions:
+* Read agent_trace_instructions.md, AGENTS.md, problem_statement.md, and
+  README.md; cited the caching encouragement and packaging prohibitions.
+* Checked challenge membership of the Qoder, Antigravity, Codex, and OpenCode
+  sources without copying active sessions.
+* Confirmed Qoder, Antigravity IDE, and OpenCode processes are active; the Codex
+  process is not active.
+* Did not create agent-trace.zip or any partial, synthetic, or reconstructed
+  trace.
+* Updated code/evaluation/evaluation_report.md and
+  code/evaluation/final_adversarial_audit.md; rebuilt code.zip; reran the
+  external entry point, tests, evaluator, output validation, and targeted
+  failure-propagation/temporal-link regressions.
+* Regenerated submission_manifest.sha256 after this entry.
+* Not performed: commit, push, upload, competition submission, agent-trace.zip
+  creation, or AI interview.
+
+Security note:
+No credential value was printed or reused. No secret was added to the
+repository. Active session traces may contain sensitive data and must be
+redacted before any future agent-trace.zip is created.
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
+## [2026-10-25T11:40:48+05:30] Code-only gap audit
+
+User Prompt (summary; no secret reproduced):
+Perform a rigorous code-only audit of the current repository: verify the
+implementation against the authoritative rules, map all deletion rules, inspect
+timestamps, identity, evidence, policy, failure paths, tests, dependencies,
+packaging, and output semantics; report confirmed, potential, and
+non-reproducible findings with fixes. Do not manage the AI interview, copy
+active-session traces, upload, submit, commit, or push.
+
+Agent Response Summary:
+Read the implementation and tests and reproduced the current tests, evaluator,
+output, archive freshness, and clean-extraction behavior. Tests currently pass
+(130 passed, 1 skipped); output is 518 rows, 2,828 steps, SHA-256 f5b6...;
+code.zip is 7e7d... and matches the source tree. The audit found confirmed code
+defects: support message and attachment records sharing a ticket ID are
+collapsed by resource-only deduplication, losing six attachment remediation
+steps; an activity link can contradict a cited image and still create a false
+finding; COMPLETE is granted from partial evidence without an in-scope
+inventory; absent/not-found states are normalized into compliant-looking states
+for several categories; missing or invalid media cache silently drops image
+evidence while cases can remain COMPLETE; unknown policy categories are ignored;
+support-attachment unknown conditions default to DELETE; false email-log
+conditions still redact; malformed evidence is silently skipped; and the output
+validator does not verify citation identity or INCOMPLETE plans. No source,
+output, report, or archive changes were made. A per-turn log entry was appended
+and the manifest refreshed.
+
+Actions:
+* Read AGENTS.md, README.md, problem_statement.md, agent_trace_instructions.md,
+  all source modules, tests, reports, deletion_rules.csv, and artifact hashes.
+* Ran the current test suite (130 passed, 1 skipped), evaluator (0 errors),
+  output reproduction, citation audit, rule/coverage checks, and a fresh
+  archive extraction (same tests/evaluator/output).
+* Exercised suspected failure paths with synthetic in-memory/temp inputs:
+  absent states, unknown categories, false policy branches, missing media
+  cache, and malformed SQL.
+* No code, output, report, or package was changed; no commit, push, upload, or
+  submission was performed.
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
+## [2026-10-25T12:29:55+05:30] Phase 1 correctness fixes and re-verification
+
+User Prompt (summary; no secret reproduced):
+Implement and test the confirmed code-only defects: prevent unsupported
+COMPLETE results, make support message/attachment deduplication category-aware,
+validate activity identity links without changing observation timestamps, make
+media-cache failures explicit, and fix absent-state, unknown-category,
+false-condition, support-attachment, and malformed-evidence behavior. Update the
+validator, tests, reports, output, archive, and manifest. Do not commit, push,
+upload, submit, or perform the AI interview.
+
+Agent Response Summary:
+Implemented the Phase 1 fixes and added targeted synthetic and validator tests.
+The account-closure gate now requires evidence-backed account closure and
+policy-compliant treatment for every evidence-supported resource/category;
+support tickets preserve both message and attachment treatments; activity links
+must be corroborated by record identifiers and preserve observation time; cache
+and malformed-evidence failures are visible; explicit absence and unknown
+categories fail closed. The final source has 174 passed, 1 skipped, the
+strengthened evaluator reports 0 errors, and the final output is 518 rows,
+2,831 steps, 74 COMPLETE / 434 INCOMPLETE / 10 NOT_APPLICABLE, SHA-256
+3862191837ebb3976e141ee6a8668311cb53b61c45b4ea10ac09faa4f199cca0. Public-sample
+status is now 25/32 because four COMPLETE cases lack evidence-backed account
+closure; this conservative tradeoff is documented rather than optimized away.
+No commit, push, upload, or submission was performed.
+
+Actions:
+* Edited code/state_reconstruction.py, code/evidence_parser.py,
+  code/media_cache.py, code/policy_engine.py, code/evaluation/main.py,
+  code/requirements.txt, code/main.py, and the affected tests/reports.
+* Added account-closure, dual-support-category, activity-link, absent-state,
+  unknown-category, policy-gap, malformed-evidence, cache-failure, and validator
+  regression tests.
+* Regenerated output.csv and rebuilt code.zip from the final source; verified
+  the exact archive in a fresh external extraction with 174 passed, 1 skipped,
+  0 evaluator errors, and the same output hash.
+* Regenerated submission_manifest.sha256 after the log update.
+* Not performed: commit, push, upload, competition submission, or AI interview.
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
+## [2026-10-25T12:55:44+05:30] Targeted audit — identity, raw tokens, validator, and evidence gaps
+
+User Prompt (summary; no secret reproduced):
+Investigate the account-closure gate against the authoritative COMPLETE rules;
+bound identity history and snapshots to audit_at; reject unknown raw result
+tokens; generalize policy-remediation validation across the 15 rules; resolve
+the evidence-gap representation for cases such as case_61 and case_63; then
+re-run tests, evaluator, output reproduction, clean extraction, and hashes.
+Do not commit, push, upload, submit, or perform the AI interview.
+
+Agent Response Summary:
+Confirmed that account closure is inferred from the account-deletion scope and
+the “every relevant copy” COMPLETE rule, not a separately named CSV condition;
+kept the conservative gate, documented the ambiguity, and retained tests for
+missing closure, clean tombstone closure, and audit-only incompleteness. Bounded
+identity resolution to audit_at for current snapshots and historical
+email/phone/hash changes; five temporal tests pass and the output is unchanged.
+Made every non-empty unknown raw result/state token explicit: it becomes
+UNKNOWN, forces an INCOMPLETE evidence gap, and is rejected by the validator.
+Generalized the validator from support-only to every policy category using the
+allowed operation mapping, with missing-action, extra-action, support,
+non-support, account, and empty-plan tests. Documented that case_61 and case_63
+have no contract-valid resource-level plan because no identity can be
+established; the safest representation remains INCOMPLETE with [].
+
+The final source has 196 passed, 1 skipped; evaluator 0 errors; output remains
+518 rows, 2,831 steps, 74 COMPLETE / 434 INCOMPLETE / 10 NOT_APPLICABLE, SHA-256
+3862191837ebb3976e141ee6a8668311cb53b61c45b4ea10ac09faa4f199cca0. The public
+sample remains 25/32 status, 12/32 exact, TP/FP/FN 156/10/37. The rebuilt archive
+was extracted externally and reproduced the output with 196/1 tests and zero
+evaluator errors. No commit, push, upload, or submission was performed.
+
+Actions:
+* Edited code/main.py, code/evidence_parser.py, code/state_reconstruction.py,
+  code/evaluation/main.py, README.md, and the affected tests/reports.
+* Added test_identity_temporal.py and raw-token, generalized-validator,
+  missing-action, extra-action, and non-support validator regressions.
+* Rebuilt code.zip after the changes and verified it from a fresh extraction.
+* Regenerated submission_manifest.sha256 after this log update.
+* Not performed: commit, push, upload, competition submission, or AI interview.
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
+## [2026-10-25T14:43:51+05:30] Maximum evidence-supported completion audit
+
+User Prompt (summary; no secret reproduced):
+Investigate all 434 INCOMPLETE cases and recover every legitimate COMPLETE case
+supported by admissible evidence; audit the account-closure gate, identity
+temporal bounds, unknown raw tokens, policy-to-operation validation, and
+evidence-gap representation; implement justified fixes, add tests, regenerate
+output, rebuild code.zip, and verify artifacts. Target 350+ COMPLETE only if
+evidence and the contract support it. Do not commit, push, upload, submit, or
+perform the AI interview.
+
+Agent Response Summary:
+Verified the 74 COMPLETE / 434 INCOMPLETE / 10 NOT_APPLICABLE baseline and
+assessed all 434 incomplete cases in reports/incomplete_case_audit.csv. The
+account-closure gate is an inferred scope condition, not a named CSV rule; it
+was kept as the conservative interpretation of the “every relevant copy” rule.
+Implemented two evidence-backed recoveries: case_61’s explicit file/object
+identity link now supplies its attachment plan, and nine already-compliant
+analytics records with explicit false conditions receive verification-only
+steps. These add 12 steps; no case status changed. The remaining 76 cases are
+blocked only by unobserved account closure, 357 cases have actual remaining
+records/restore risks, and case_63 has unresolved resource identity. 350
+COMPLETE is not defensible: relaxing the inferred gate would yield at most 150,
+still below target without ignoring real findings or fabricating evidence.
+Tests pass 202/1; evaluator 0 errors; output is 518 rows, 2,843 steps, 74/434/10,
+SHA-256 92b2ef07718bc2c3acf414e7ebb413e4102b37233af5182bf5325ecd5dfbad46.
+
+Actions:
+* Audited all 434 baseline INCOMPLETE cases and wrote the 24-column case table.
+* Edited state_reconstruction.py and evaluation/main.py for explicit file/object
+  link handling and false-condition verification; added recovery tests.
+* Regenerated output.csv; rebuilt code.zip; verified the exact archive in a
+  fresh extraction with 202 passed, 1 skipped, evaluator 0 errors, and matching
+  output.
+* Regenerated submission_manifest.sha256 including the audit table after this
+  log update.
+* Not performed: commit, push, upload, competition submission, or AI interview.
+
+Context:
+tool=Qoder
+model=dfmodel
+branch=main
+repo_root=D:\HACKERRANK AGENT\hackerrank-orchestrate-october26
+worktree=main
+parent_agent=none
+
+## [2026-10-25T14:56:56+05:30] Push final audited state to GitHub
+
+User Prompt (verbatim):
+PUSH TO GITHUB
+
+Agent Response Summary:
+Reviewed the working tree, author identity, origin URL, diff scope, and
+secret/PII scans before committing. Split the audited changes into nine logical
+commits covering pipeline/identity hardening, parser and media-cache fixes,
+policy fail-closed behavior, category-aware reconstruction, generalized
+validation, reports, the 434-case audit table, regenerated output, and the
+rebuilt archive. Pushed origin/main from f7c9a2f to 3b0a71c under vincenzo-afk.
+No HackerRank submission or external upload was performed.
+
+Actions:
+* Committed: 7d41af2 (pipeline/identity), dfb2b03 (parser/cache), 610145d
+  (policy), cf65d19 (reconstruction/tests), b0cd682 (validator/dependency),
+  3038df0 (reports), 2728712 (434-case audit), 206db9c (output), 3b0a71c
+  (code.zip).
+* Pushed origin/main: f7c9a2f..3b0a71c.
+* Regenerated submission_manifest.sha256 after this entry.
+* Not performed: HackerRank submission, agent-trace creation, or AI interview.
 
 Context:
 tool=Qoder
