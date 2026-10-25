@@ -163,9 +163,11 @@ Before submitting, confirm that:
 ### What it does
 
 `code/main.py` reads the participant-facing files in `dataset/` and writes
-`output.csv` at the repository root. The pipeline is deterministic and
-rule-based; it makes no LLM or network calls, so the run costs $0 and is
-reproducible.
+`output.csv` at the repository root. The production run is deterministic and
+offline; it makes no model or network calls, so the run costs $0 and is
+reproducible. Image records come from a SHA-validated cache of observations
+extracted from the actual image bytes by Gemini; an explicit live refresh path
+is available for regenerating observations.
 
 Pipeline stages:
 
@@ -177,10 +179,12 @@ Pipeline stages:
 3. `resolve_identity` joins each request email to a user through current and
    historical emails, hashed identifiers, phone numbers and user IDs.
 4. `load_evidence_corpus` parses SQL snapshots, JSON bundles, logs (key=value,
-   JSON, pipe, syslog), PDFs and catalogued images into normalised records.
+   JSON, pipe, syslog), PDFs and SHA-validated Gemini-derived image observations
+   into normalised records.
 5. `reconstruct_case_state` keeps only records captured inside
    `[requested_at, audit_at]`, deduplicates them (newest capture wins), applies
-   `deletion_rules.csv`, and emits FINDING / REMEDIATION / VERIFICATION steps.
+   the condition-bearing `deletion_rules.csv` through `code/policy_engine.py`,
+   and emits FINDING / REMEDIATION / VERIFICATION steps.
 6. The CSV is written sorted by `case_id` with the required header.
 
 ### Setup
@@ -191,25 +195,48 @@ Python 3.10+ (verified on 3.14.7).
 pip install -r code/requirements.txt
 ```
 
-Only `pypdf` is required at runtime. `pytest` is needed to run the tests.
+`pypdf` is required for PDF extraction. `pydantic` and `google-genai` are
+required for the optional live Gemini refresh path; the normal offline run uses
+the checked-in SHA-validated cache and does not call Gemini. `pytest` is needed
+to run the tests.
 
 ### Run
 
 ```bash
 python code/main.py            # regenerates ./output.csv (518 rows)
-python -m pytest code/tests -q # 100 tests
+python -m pytest code/tests -q # 127 tests passed, 1 live test skipped by default
 python code/evaluation/main.py # sample scoring + full output validation
 ```
 
 `code/evaluation/main.py` exits non-zero if the 518-row output violates the
 contract; the last run reported 0 errors.
 
+### Gemini image refresh (explicit, optional)
+
+The normal run never calls the network. To refresh observations for one local
+image, set `GEMINI_API_KEY` in the environment and run:
+
+```bash
+python code/gemini_extractor.py dataset/evidence/images/support_ticket_console_20260524.png evidence_28
+```
+
+`GEMINI_MODEL` defaults to `gemini-3.8-flash`; set it explicitly to use another
+model available to the account. Only the selected image bytes and the extraction
+prompt are sent to Gemini. No API key, dataset archive, or `log.txt` is uploaded.
+The extractor validates the JSON schema, rejects invented identifiers/resource
+IDs, caches by source SHA-256 + model + prompt version, and never chooses a
+deletion status or remediation step. Do not commit the API key or `.gemini_cache/`.
+The final offline run reported in `code/evaluation/usage_report.md` makes zero
+model calls; the separate controlled Gemini extraction experiment is documented
+there.
+
 ### Reports
 
 - `code/evaluation/evaluation_report.md` — contract checks, sample metrics,
   custom evaluation cases, defects found and fixed.
-- `code/evaluation/usage_report.md` — full-dataset run measurements, model/token
-  usage and cost (0 calls, $0.00).
+- `code/evaluation/usage_report.md` — final offline full-dataset measurements
+  (0 model calls, $0.00) plus the separate controlled Gemini extraction
+  experiment and token counts.
 
 ### Design guarantees
 
@@ -222,6 +249,10 @@ contract; the last run reported 0 errors.
   record.
 - Findings and `COMPLETE` verifications cite a `file_id`, `activity_id` or
   `audit_id`; remediation and future verification steps use `evidence_id=""`.
+- Image observations are loaded only when the actual image SHA-256 matches the
+  cache entry; changing an image invalidates its observations.
+- Policy decisions are selected from `deletion_rules.csv`; unsupported
+  conditions fail closed and cannot manufacture a complete verdict.
 
 ### Known limitation
 

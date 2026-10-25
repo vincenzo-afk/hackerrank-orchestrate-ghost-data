@@ -4,8 +4,10 @@ Measured on 2026-10-25 on the full 518-request dataset (`dataset/deletion_reques
 
 ## 1. Model usage
 
-The submitted agent is a deterministic rule-based pipeline. It does **not** call
-an LLM or any external API at inference time.
+The submitted agent is a deterministic rule-based pipeline. The final
+full-dataset run does **not** call an LLM or any external API. Image records are
+read from a SHA-validated cache of observations produced by a separate,
+explicitly requested Gemini extraction experiment.
 
 | Provider | Model | Calls | Input tokens | Output tokens | Total tokens | Cost |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -36,23 +38,37 @@ python -X utf8 code/main.py
 | Requests processed | 518 |
 | Output rows written | 518 (`./output.csv`) |
 | Evidence files parsed | 94 |
-| Normalised evidence records | 2 911 |
-| Steps generated | 2 823 |
-| Average steps per request | 5.45 |
-| Wall-clock runtime | **9.922 s** (final audit run; repeat 10.145 s) |
-| Average runtime per request | **~19.2 ms** |
+| Normalised evidence records | 2 932 |
+| Steps generated | 2 828 |
+| Average steps per request | 5.46 |
+| Wall-clock runtime | **8.323 s** (final audit run; repeat 8.224 s) |
+| Average runtime per request | **~16.1 ms** |
 | Memory / token cost per request | not applicable (no model; no per-request network work) |
 | Exit code | 0 |
 
 Status distribution: INCOMPLETE 358, COMPLETE 150, NOT_APPLICABLE 10.
-The output is 564 376 bytes, with SHA-256
-`e9227291f636af17b44190ab61f3e95eafbffe82c7004760006bbf0c8ace745e`.
+The output is 564 902 bytes with deterministic LF line endings and SHA-256
+`f5b6f1ebabb0e56834a881007ad91f6080302778bec31b1ad42d1c582d6a04e4`.
+
+### Controlled Gemini extraction experiment (development only)
+
+| Provider | Model | Successful calls | Failed calls | Prompt tokens | Output tokens | Reasoning tokens | Total tokens |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Google | `gemini-3.8-flash` | 13 | 1 (HTTP 503, retried) | 18,075 | 9,502 | 33,458 | **61,035** |
+
+Thirteen successful calls comprised 11 screenshot extractions for the media
+cache plus two exploratory smoke calls. The experiment sent only the selected
+local PNG files; no dataset archive, `log.txt`, API key, or credential was
+uploaded. The final offline run above uses the validated cache and makes
+**0 model calls / 0 tokens**. The SDK did not expose a configured price table;
+no cost estimate is asserted for the experiment. Per successful experiment
+call, the average was 4,695 total tokens.
 
 ## 3. Verification runs
 
 | Command | Result |
 | --- | --- |
-| `python -X utf8 -m pytest code/tests -q` | **100 passed** (66 foundation + 14 evidence/state + 12 participant-created custom-evaluation + 8 recorded-at regression tests), exit 0 |
+| `python -X utf8 -m pytest code/tests -q` | **127 passed, 1 skipped** (the opt-in live Gemini smoke test is skipped by default), exit 0 |
 | `python -X utf8 code/evaluation/main.py` | 0 contract errors; sample status accuracy 29/32; exact cases 12/32; step TP/FP/FN 166/0/27; precision 1.0, recall 0.860104, F1 0.924791 |
 | `python -X utf8 code/main.py` (repeat) | byte-identical `output.csv` (deterministic) |
 
@@ -60,8 +76,10 @@ The output is 564 376 bytes, with SHA-256
 
 - Python 3.14.7, Windows 10 (10.0.19045)
 - `pypdf` 6.21.2 (PDF evidence extraction)
+- `pydantic` 2.13.5 and `google-genai` 1.75.0 (optional live Gemini refresh; not used by the final offline run)
 - `pytest` 9.1.1 (tests only, not required at runtime)
 - Standard library for everything else (csv, json, sqlite3, re, dataclasses)
 
-Because there are no model calls, there is no provider pricing table to apply;
-the estimated cost is exactly $0.00 for both the full run and per request.
+The final offline run has no model calls, so its provider cost is exactly
+$0.00 for both the full run and per request. The separate Gemini experiment
+used the token counts above; no pricing estimate is claimed.

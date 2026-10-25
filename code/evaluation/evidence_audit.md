@@ -10,8 +10,8 @@
 This audit report documents the comprehensive inspection of the **Ghost Data Still Exists** evidence corpus, the architecture of the normalized evidence model, the verification of all 15 deletion policy rules against real evidence, and the system-state reconstruction engine implemented for Task 3.
 
 Key achievements:
-- **100% Evidence Manifest Coverage**: Every one of the **94 evidence files** registered in `dataset/evidence_files.csv` was inspected, classified, and mapped into our multi-format parser (`code/evidence_parser.py` and `code/image_catalog.py`).
-- **Zero Reliance on OCR at Runtime**: All 11 administrative console screenshots (`.png`) were cataloged and transcribed into structured dataclasses (`code/image_catalog.py`), eliminating flaky runtime OCR dependencies while guaranteeing deterministic, ground-truth extraction.
+- **100% Evidence Manifest Coverage**: Every one of the **94 evidence files** registered in `dataset/evidence_files.csv` was inspected, classified, and mapped into our multi-format parser (`code/evidence_parser.py` and `code/media_cache.py`).
+- **No Runtime OCR Dependency**: The 11 administrative console screenshots (`.png`) are processed by an explicit Gemini extraction experiment and stored as SHA-validated derived observations in `code/media_observations.json`; the offline run verifies each source hash and makes no network call.
 - **Strict Evidence Provenance and Temporal Boundaries**: All evidence items captured after a case's `audit_at` cutoff are strictly rejected. `system_activity.csv` records are treated strictly as operational claims; observed ground truth requires corroboration in evidence snapshots or terminal trace logs.
 - **79 Automated Tests Passing**: A comprehensive test suite (`code/tests/test_foundation.py` and `code/tests/test_evidence_and_state.py`) validates edge cases including replication drift, active sync connectors, backup restore risks, legal holds, security audit log preservation, clean tombstones vs. exposed direct PII, and evidence ID citation contracts.
 
@@ -28,7 +28,7 @@ The evidence manifest (`dataset/evidence_files.csv`) defines 94 files across 5 d
 | **JSON (`.json`)** | 28 | `evidence/records/` | `user_service`, `search_service`, `analytics_pipeline`, `support_service`, `delivery_service` | Parsed with Python's standard `json` library; deep-scanned for user IDs, emails, hashes, phones, and status fields. |
 | **Log (`.log`)** | 26 | `evidence/logs/` | `deletion_worker`, `analytics_pipeline`, `resource_lookup_trace` | Regex-scanned for JSON payload lines, HTTP status codes, row counts, and audit trail entries. Initiation events (`_started`) are filtered out; only terminal completion events are evaluated. |
 | **SQL (`.sql`)** | 24 | `evidence/databases/` | `account_service`, `order_service`, `customer_accounts_replica`, `customer_accounts_failover` | Executed against in-memory SQLite (`sqlite3`) instances. Table structures, column names, and row-level PII attributes are extracted directly via SQL queries. |
-| **Image (`.png`)** | 11 | `evidence/images/` | `admin_console_audit`, `admin_portal` | Transcribed into structured `ConsoleSnapshot` dataclasses (`code/image_catalog.py`). Records user search queries, displayed profile tables, retention badges, and action buttons. |
+| **Image (`.png`)** | 11 | `evidence/images/` | `admin_console_audit`, `admin_portal` | Gemini-derived observations cached by source SHA-256 (`code/media_observations.json`); records are validated and loaded only when the actual image hash matches. |
 | **PDF (`.pdf`)** | 4 | `evidence/documents/` | `legal_archive`, `compliance_office` | Parsed using `pypdf.PdfReader` to extract text blocks, case IDs, legal hold identifiers, subject names, and retention policy annotations. |
 | **Text (`.txt`)** | 1 | `evidence/records/` | `security_audit` | Line-parsed unstructured security and access logs for subject activity and authentication events. |
 | **Total** | **94** | | | **100% Inspected & Supported** |
@@ -182,7 +182,7 @@ code/tests/test_foundation.py (66 tests)
 
 ### Implemented
 - [x] Full evidence manifest reader and format dispatching (`code/evidence_parser.py`).
-- [x] Transcription catalog for 11 admin console UI screenshots (`code/image_catalog.py`).
+- [x] SHA-validated Gemini observation cache for 11 admin console UI screenshots (`code/media_observations.json`).
 - [x] Parsers for SQL snapshots (via SQLite), JSON records, log streams, text files, and PDF documents.
 - [x] Normalized evidence model (`ObservedRecord`, `EvidenceCorpus`).
 - [x] State reconstruction logic enforcing `deletion_rules.csv` (`code/state_reconstruction.py`).
