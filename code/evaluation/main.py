@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -19,8 +20,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "code"))
 
-from main import _serialize_steps, audit_request, load_datasets  # noqa: E402
+from main import (  # noqa: E402
+    _serialize_steps,
+    audit_request,
+    load_datasets,
+    resolve_identity,
+)
 from evidence_parser import load_evidence_corpus, _parse_iso  # noqa: E402
+from policy_engine import ALLOWED_STEP_STATES  # noqa: E402
 
 DATASET_DIR = REPO_ROOT / "dataset"
 FIELDS = ("step_no", "phase", "system_id", "resource_id", "operation", "state", "evidence_id")
@@ -129,22 +136,141 @@ def score_samples(datasets, corpus):
     }
 
 
-def validate_output(datasets, corpus):
+def _effective_state(rec):
+    if rec.state == "ACTIVE" and rec.data_category not in ("DATA_FLOW", "BACKUP_ARCHIVE"):
+        return "PRESENT"
+    return rec.state
+
+
+def _strong_identifiers(rec):
+    """Identifiers strong enough to establish a subject without an anchor.
+
+    Names/display names are weak and deliberately excluded; they are not used
+    for identity resolution in the production pipeline either.
+    """
+    result = set()
+    for value in rec.normalized_identifiers:
+        if "@" in value or value.startswith("+") or value.startswith("user_"):
+            result.add(value)
+        elif len(value) == 64 and all(ch in "0123456789abcdef" for ch in value):
+            result.add(value)
+    return result
+
+
+def _expected_operations(datasets, rec, audit_at, user_identifiers, state):
+    """Return the operations the supplied rules require for one observation.
+
+    This is a validator-side restatement of the allowed operation mapping; it
+    does not add a policy that is absent from ``deletion_rules.csv``.
+    """
+    category = rec.data_category
+    if category == "DATA_FLOW":
+        if state == "ACTIVE":
+            return {"REPORT_ACTIVE_DATA_FLOW", "DISABLE_DATA_FLOW", "VERIFY_DATA_FLOW_DISABLED"}
+        if state == "DISABLED":
+            return {"VERIFY_DATA_FLOW_DISABLED"}
+        return set()
+    if category == "BACKUP_ARCHIVE":
+        if state == "ACTIVE":
+            return {"REPORT_RESTORE_RISK", "BLOCK_RESTORE", "VERIFY_RESTORE_BLOCKED"}
+        if state == "BLOCKED":
+            return {"VERIFY_RESTORE_BLOCKED"}
+        return set()
+
+    decision = datasets.policy.decide(rec, audit_at, user_identifiers)
+    if decision.condition_value is False:
+        if category in ("ANALYTICS_PROFILE", "PRODUCT_TELEMETRY") and state == "ANONYMIZED":
+            return {"VERIFY_RECORD_ANONYMIZED"}
+        if category == "EMAIL_DELIVERY_LOG" and state == "REDACTED":
+            return {"VERIFY_RECORD_REDACTED"}
+        return set()
+    if not decision.supported or not decision.action:
+        return set()
+    action = decision.action
+
+    if action == "DELETE":
+        if state == "ABSENT":
+            return {"VERIFY_RECORD_ABSENT"}
+        if state in ("PRESENT", "REDACTED", "ANONYMIZED", "ACTIVE"):
+            return {"REPORT_REMAINING_RECORD", "DELETE_RECORD", "VERIFY_RECORD_ABSENT"}
+        return set()
+    if action == "REDACT":
+        if state == "PRESENT":
+            return {"REPORT_EXPOSED_PII", "REDACT_RECORD", "VERIFY_RECORD_REDACTED"}
+        if state == "REDACTED":
+            return {"VERIFY_RECORD_REDACTED"}
+        return set()
+    if action == "ANONYMIZE":
+        if state == "PRESENT":
+            return {"REPORT_EXPOSED_PII", "ANONYMIZE_RECORD", "VERIFY_RECORD_ANONYMIZED"}
+        if state == "ANONYMIZED":
+            return {"VERIFY_RECORD_ANONYMIZED"}
+        return set()
+    if action == "RETAIN":
+        if state == "PRESENT":
+            return {"VERIFY_RECORD_PRESENT"}
+        return set()
+    return set()
+
+
+def _activity_link_supports(rec, req, wants, activity_rows):
+    """Whether an admissible explicit file/object link supports this citation."""
+    for row in activity_rows:
+        if row.get("event_type") != "LINK_RESOURCE_IDENTITY":
+            continue
+        try:
+            event_time = _parse_iso(str(row.get("event_time") or ""))
+        except ValueError:
+            continue
+        if event_time < req.requested_at or event_time > req.audit_at:
+            continue
+        details = str(row.get("details") or "").lower()
+        if not any(len(value) >= 4 and value in details for value in wants):
+            continue
+        resource_id = str(row.get("resource_id") or "").strip()
+        if resource_id == rec.resource_id:
+            return True
+        match = re.search(r"\(([^()]+\.[A-Za-z0-9]+)\)", details)
+        if match and str(rec.details.get("object_key") or "").endswith("/" + match.group(1)):
+            return True
+    return False
+
+
+def validate_output(datasets, corpus, output_path=None):
     observations = {}
+    records_by_key = {}
+    records_by_resource = {}
+    category_by_resource = {}
     for rec in corpus.records:
-        state = rec.state
-        if state == "ACTIVE" and rec.data_category not in ("DATA_FLOW", "BACKUP_ARCHIVE"):
-            state = "PRESENT"
+        state = _effective_state(rec)
         key = (rec.evidence_id, rec.system_id, rec.resource_id, state)
         observations.setdefault(key, []).append(rec.captured_at)
+        records_by_key.setdefault(key, []).append(rec)
+        records_by_resource.setdefault((rec.system_id, rec.resource_id), []).append(rec)
+        category_by_resource.setdefault((rec.system_id, rec.resource_id), set()).add(rec.data_category)
     activity_time = {r["activity_id"]: _parse_iso(r["event_time"]) for r in datasets.system_activity}
     audit_time = {r["audit_id"]: _parse_iso(r["event_time"]) for r in datasets.audit_log}
     requests_by_id = {r.case_id: r for r in datasets.deletion_requests}
+    fingerprints = {
+        cid: resolve_identity(req.email, datasets, as_of=req.audit_at).fingerprint
+        for cid, req in requests_by_id.items()
+    }
+    known_categories = {rule.data_category for rule in datasets.policy.rules} | {"DATA_FLOW"}
+    unsupported_categories = sorted(
+        {rec.data_category for rec in corpus.records if rec.data_category not in known_categories}
+    )
+    unsupported_states = sorted(
+        {rec.state for rec in corpus.records if rec.state not in ALLOWED_STEP_STATES}
+    )
 
-    with open(REPO_ROOT / "output.csv", encoding="utf-8") as f:
+    with open(output_path or (REPO_ROOT / "output.csv"), encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
     errors = []
+    if unsupported_categories:
+        errors.append(f"unsupported evidence categories: {unsupported_categories}")
+    if unsupported_states:
+        errors.append(f"unsupported evidence states: {unsupported_states}")
     if [r["case_id"] for r in rows] != sorted(requests_by_id):
         errors.append("case_ids are not exactly the sorted request ids")
     for row in rows:
@@ -165,6 +291,16 @@ def validate_output(datasets, corpus):
             continue
         if row["deletion_status"] == "NOT_APPLICABLE" and steps:
             errors.append(f"{cid}: NOT_APPLICABLE must use []")
+        fp = fingerprints.get(cid)
+        wants = {str(i).strip().lower() for i in (fp.all_identifiers if fp else set())}
+        matched_records = (
+            corpus.get_records_for_identifiers(
+                fp.all_identifiers, req.audit_at, not_before=req.requested_at
+            )
+            if fp
+            else []
+        )
+        account_closed = False
         order_keys = []
         for index, step in enumerate(steps, 1):
             if set(step) != set(FIELDS):
@@ -213,10 +349,100 @@ def validate_output(datasets, corpus):
                         errors.append(f"{cid} step {index}: evidence after audit_at")
                     elif captured < req.requested_at:
                         errors.append(f"{cid} step {index}: evidence before requested_at")
+                if captured_times is not None:
+                    candidates = records_by_key.get(key, [])
+                    direct = any(_strong_identifiers(rec) & wants for rec in candidates)
+                    if not direct:
+                        has_strong = any(_strong_identifiers(rec) for rec in candidates)
+                        anchor = any(
+                            rec.captured_at <= req.audit_at
+                            and _strong_identifiers(rec) & wants
+                            for rec in records_by_resource.get(
+                                (step["system_id"], step["resource_id"]), []
+                            )
+                        )
+                        if has_strong:
+                            errors.append(
+                                f"{cid} step {index}: cited evidence identity conflicts with the case"
+                            )
+                        elif not anchor and not _activity_link_supports(
+                            rec=candidates[0], req=req, wants=wants,
+                            activity_rows=datasets.system_activity,
+                        ):
+                            errors.append(
+                                f"{cid} step {index}: cited evidence identity is unestablished"
+                            )
+            # Account closure must be evidence-backed for COMPLETE cases.
+            cats = category_by_resource.get(
+                (step["system_id"], step["resource_id"]), set()
+            )
+            if (
+                step["phase"] == "VERIFICATION"
+                and step["operation"] == "VERIFY_RECORD_ABSENT"
+                and "USER_PROFILE" in cats
+            ) or (
+                step["phase"] == "VERIFICATION"
+                and step["operation"] == "VERIFY_RECORD_REDACTED"
+                and "ACCOUNT_TOMBSTONE" in cats
+            ):
+                account_closed = True
         if order_keys != sorted(order_keys):
             errors.append(f"{cid}: steps violate phase/operation/system/resource ordering")
         if row["deletion_status"] == "COMPLETE" and not steps:
             errors.append(f"{cid}: COMPLETE without verification steps")
+        if row["deletion_status"] == "COMPLETE" and not account_closed:
+            errors.append(f"{cid}: COMPLETE without evidence-backed account closure")
+        output_steps = [s for s in steps if set(s) == set(FIELDS)]
+
+        # Validate the deterministic required operations for every category
+        # that is supported by matched evidence.  Choose the newest record per
+        # (system, resource, category), matching reconstruction's state choice.
+        latest_records = {}
+        for rec in matched_records:
+            key = (rec.system_id, rec.resource_id, rec.data_category)
+            current = latest_records.get(key)
+            if current is None or rec.captured_at > current.captured_at:
+                latest_records[key] = rec
+
+        required_by_resource = {}
+        expected_by_resource = {}
+        if row["deletion_status"] != "NOT_APPLICABLE":
+            for (system_id, resource_id, category), rec in latest_records.items():
+                state = _effective_state(rec)
+                expected = _expected_operations(
+                    datasets, rec, req.audit_at, fp.all_identifiers if fp else (), state
+                )
+                if not expected:
+                    continue
+                required_by_resource.setdefault((system_id, resource_id), {})[category] = expected
+                expected_by_resource.setdefault((system_id, resource_id), set()).update(expected)
+
+        for (system_id, resource_id), categories in required_by_resource.items():
+            present_ops = {
+                s["operation"]
+                for s in output_steps
+                if s["system_id"] == system_id and s["resource_id"] == resource_id
+            }
+            for category, expected in categories.items():
+                missing = expected - present_ops
+                if missing:
+                    errors.append(
+                        f"{cid}: missing {category} treatment for {resource_id}: "
+                        f"{sorted(missing)}"
+                    )
+
+        matched_resources = {
+            (rec.system_id, rec.resource_id) for rec in latest_records.values()
+        }
+        for step in output_steps:
+            key = (step["system_id"], step["resource_id"])
+            if key in matched_resources and step["operation"] not in expected_by_resource.get(key, set()):
+                errors.append(
+                    f"{cid}: unsupported {step['operation']} for {step['resource_id']}"
+                )
+
+        if row["deletion_status"] == "INCOMPLETE" and not steps and any(expected_by_resource.values()):
+            errors.append(f"{cid}: INCOMPLETE has evidence but no plan")
     return rows, errors
 
 
