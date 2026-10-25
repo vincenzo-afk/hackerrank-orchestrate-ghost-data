@@ -29,24 +29,15 @@ SUPPORTED_CONDITIONS = {
     "account is deleted and only a stable internal user_id is needed to preserve references to retained records",
 }
 
-# A false condition means the supplied rule does not prescribe an action.
-# The supplied CSV has no inverse-action column, so categories whose false
-# branch would require a new policy choice fail closed.  Analytics/telemetry
-# and email-delivery records already in the compliant state still receive a
-# verification-only action; backup restore handling is a reconstruction
-# mechanic driven by the explicit restore state.
-_FALSE_VERIFICATION_ACTIONS = {
-    "ANALYTICS_PROFILE": "ANONYMIZE",
-    "PRODUCT_TELEMETRY": "ANONYMIZE",
-    "EMAIL_DELIVERY_LOG": "REDACT",
-    "BACKUP_ARCHIVE": "RETAIN",
-}
-
-# When the evidence does not expose the condition field, keep the established
-# conservative treatment rather than inventing a relationship.
+# An explicit false condition means the supplied rule does not prescribe an
+# action.  The CSV has no inverse-action column, so the reconstruction layer
+# treats this as a policy gap rather than inventing DELETE/REDACT/ANONYMIZE.
+#
+# When the evidence does not expose the condition field, only non-destructive
+# treatments may be used.  Support-attachment ownership is intentionally absent:
+# an unknown owner must never cause deletion of possibly shared content.
 _UNKNOWN_ACTIONS = {
     "SUPPORT_MESSAGE": "REDACT",
-    "SUPPORT_ATTACHMENT": "DELETE",
     "SECURITY_AUDIT_LOG": "RETAIN",
     "LEGAL_HOLD_RECORD": "RETAIN",
     "ACCOUNT_TOMBSTONE": "REDACT",
@@ -259,10 +250,13 @@ class PolicyEngine:
         rules = self.rules_for(category)
         user_ids = {str(value).strip().lower() for value in user_identifiers if str(value).strip()}
         if not rules:
-            # DATA_FLOW and other non-policy mechanics are handled by the
-            # reconstruction layer; this sentinel is never treated as a policy
-            # action.
-            return PolicyDecision("", "", "", None, "no supplied policy rule", category)
+            # DATA_FLOW and BACKUP_ARCHIVE are handled before this layer.  Any
+            # other category without a supplied rule must fail closed rather
+            # than disappear from the audit.
+            return PolicyDecision(
+                "", "", "", None, "no supplied policy rule", category,
+                supported=False,
+            )
 
         for rule in rules:
             if rule.condition.strip().lower() not in SUPPORTED_CONDITIONS:
@@ -278,17 +272,18 @@ class PolicyEngine:
                     "documented condition is true", category,
                 )
             if value is None:
-                action = _UNKNOWN_ACTIONS.get(category, rule.required_action)
+                action = _UNKNOWN_ACTIONS.get(category, "")
                 return PolicyDecision(
                     action, rule.rule_id, rule.condition, None,
-                    "condition field is absent or ambiguous; conservative fallback", category,
+                    "condition field is absent or ambiguous; no action unless safely supported",
+                    category,
                 )
             # Explicit false: the CSV does not supply an inverse action.
-            # Fail closed instead of inventing DELETE/REDACT.
-            action = _FALSE_VERIFICATION_ACTIONS.get(category, "")
+            # Do not invent remediation; leave the action empty so the
+            # reconstruction layer records a policy gap.
             return PolicyDecision(
-                action, rule.rule_id, rule.condition, False,
-                "documented condition is false; no supplied action; failing closed",
+                "", rule.rule_id, rule.condition, False,
+                "documented condition is false; no supplied action; policy gap",
                 category,
             )
 

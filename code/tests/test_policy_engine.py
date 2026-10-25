@@ -107,7 +107,8 @@ def test_analytics_attributable_condition(engine):
     present = decide(engine, "ANALYTICS_PROFILE", state="PRESENT")
     anonymous = decide(engine, "ANALYTICS_PROFILE", state="ANONYMIZED", identifiers=set())
     assert (present.action, present.condition_value) == ("ANONYMIZE", True)
-    assert (anonymous.action, anonymous.condition_value) == ("ANONYMIZE", False)
+    # A false condition authorizes no remediation in the supplied CSV.
+    assert (anonymous.action, anonymous.condition_value) == ("", False)
 
 
 def test_email_delivery_log_condition(engine):
@@ -115,7 +116,9 @@ def test_email_delivery_log_condition(engine):
     empty = decide(engine, "EMAIL_DELIVERY_LOG", details={"email": ""})
     unknown = decide(engine, "EMAIL_DELIVERY_LOG", details={})
     assert (contains.action, contains.condition_value) == ("REDACT", True)
-    assert (empty.action, empty.condition_value) == ("REDACT", False)
+    # No email means the condition is false; the rule supplies no inverse
+    # action, so no remediation is authorized.
+    assert (empty.action, empty.condition_value) == ("", False)
     assert (unknown.action, unknown.condition_value) == ("REDACT", None)
 
 
@@ -150,7 +153,9 @@ def test_backup_restore_condition(engine):
     active = decide(engine, "BACKUP_ARCHIVE", state="ACTIVE", details={"restore_allowed": True})
     unknown = decide(engine, "BACKUP_ARCHIVE", state="BLOCKED", details={})
     assert (blocked.action, blocked.condition_value) == ("RETAIN", True)
-    assert (active.action, active.condition_value) == ("RETAIN", False)
+    # False condition: reconstruction handles the active backup as a restore
+    # risk, but the policy itself must not invent a RETAIN action.
+    assert (active.action, active.condition_value) == ("", False)
     assert (unknown.action, unknown.condition_value) == ("RETAIN", True)
 
 
