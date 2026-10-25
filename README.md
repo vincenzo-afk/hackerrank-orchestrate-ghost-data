@@ -204,7 +204,7 @@ to run the tests.
 
 ```bash
 python code/main.py            # regenerates ./output.csv (518 rows)
-python -m pytest code/tests -q # 127 tests passed, 1 live test skipped by default
+python -m pytest code/tests -q # 202 tests passed, 1 live test skipped by default
 python code/evaluation/main.py # sample scoring + full output validation
 ```
 
@@ -244,22 +244,49 @@ there.
   `requested_at`) can decide a case. Record-level JSON `recorded_at` values
   take precedence over the enclosing snapshot/export time, while more specific
   `observed_at` and record-level `captured_at` fields retain precedence.
-- A case is `COMPLETE` only when every in-scope resource has an evidenced
-  compliant state; missing evidence yields `INCOMPLETE`, never an invented
-  record.
+- Identity history is bounded by `audit_at`: later email/phone/hash changes and
+  later snapshot updates are not used to resolve or link a case.
+- A case is `COMPLETE` only when the account closure is evidenced (an absent
+  `USER_PROFILE` or a clean `ACCOUNT_TOMBSTONE`) and every evidence-supported
+  resource/category has a policy-compliant verification. This closure condition
+  is an inferred minimum from the account-deletion scope and the “every
+  relevant copy” rule; it is not a separately named CSV rule. Unobserved
+  categories are not treated as absent; missing evidence yields `INCOMPLETE`,
+  never an invented record.
+- Support tickets retain both `SUPPORT_MESSAGE` and `SUPPORT_ATTACHMENT`
+  treatments when they share a resource ID. Activity identity links are used
+  only when the evidence record already contains a matching subject identifier;
+  the record's observation timestamp is never replaced by the link timestamp.
 - Findings and `COMPLETE` verifications cite a `file_id`, `activity_id` or
   `audit_id`; remediation and future verification steps use `evidence_id=""`.
-- Image observations are loaded only when the actual image SHA-256 matches the
-  cache entry; changing an image invalidates its observations.
-- Policy decisions are selected from `deletion_rules.csv`; unsupported
-  conditions fail closed and cannot manufacture a complete verdict.
+- Image observations are loaded only when the cache is valid and the actual
+  image SHA-256 matches the cache entry. Missing, malformed, incomplete, or
+  hash-mismatched cache evidence fails the run instead of silently shrinking
+  the evidence set.
+- Policy decisions are selected from `deletion_rules.csv`; false conditions,
+  unsupported conditions, unknown categories, and unknown support-attachment
+  ownership fail closed and cannot manufacture a complete verdict.
+- Explicit absence (`NOT_FOUND`/equivalent) is never converted into `PRESENT`,
+  `REDACTED`, or `ANONYMIZED`. Non-empty raw result tokens outside the
+  recognized vocabulary become `UNKNOWN` and force an INCOMPLETE evidence gap.
+  Malformed SQL/JSON/log records and unsupported evidence formats raise an
+  explicit parse error.
+- Required imports and every case reconstruction are fail-visible. A parser,
+  cache, policy, or reconstruction failure raises with the affected `case_id`
+  and writes no output CSV instead of emitting a plausible `INCOMPLETE` row.
 
 ### Known limitation
 
-Twenty-seven public-sample steps remain unrecoverable from participant-visible
-evidence: 18 account, 7 anonymous analytics, and 2 retained-audit verifications.
-The relevant resource names or anonymous rows do not establish a subject link;
-sparse snapshots cannot supply that mapping. The agent does not infer IDs from
-sample answers, neighboring activity, or naming patterns. Three cases are
-therefore reported `INCOMPLETE` instead of gold `COMPLETE`; the evaluation
-report lists every remaining per-case mismatch.
+Thirty-seven public-sample gold steps remain unmatched: 27 are unrecoverable
+from participant-visible evidence (18 account, 7 anonymous analytics, and 2
+retained-audit verifications), and 10 are verifications whose evidence fields
+become future checks when the conservative account-closure gate returns
+`INCOMPLETE`. The relevant resource names or anonymous rows do not establish a
+subject link; sparse snapshots cannot supply that mapping. The agent does not
+infer IDs from sample answers, neighboring activity, or naming patterns.
+
+The account-closure gate also moved 76 full-dataset cases from `COMPLETE` to
+`INCOMPLETE` because no evidence-backed absent profile or clean tombstone exists
+for them. That is a conservative evidence decision, not proof that those
+accounts exist. The evaluation report lists the status and step differences and
+all remaining public per-case mismatches.

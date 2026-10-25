@@ -37,18 +37,18 @@ python -X utf8 code/main.py
 | --- | --- |
 | Requests processed | 518 |
 | Output rows written | 518 (`./output.csv`) |
-| Evidence files parsed | 94 |
+| Evidence manifest entries | 94 (93 files with records; `evidence_90` is empty) |
 | Normalised evidence records | 2 932 |
-| Steps generated | 2 828 |
-| Average steps per request | 5.46 |
-| Wall-clock runtime | **8.323 s** (final audit run; repeat 8.224 s) |
-| Average runtime per request | **~16.1 ms** |
+| Steps generated | 2 843 |
+| Average steps per request | 5.49 |
+| Wall-clock runtime | **6.277 s** (final source run) |
+| Average runtime per request | **~12.1 ms** |
 | Memory / token cost per request | not applicable (no model; no per-request network work) |
 | Exit code | 0 |
 
-Status distribution: INCOMPLETE 358, COMPLETE 150, NOT_APPLICABLE 10.
-The output is 564 902 bytes with deterministic LF line endings and SHA-256
-`f5b6f1ebabb0e56834a881007ad91f6080302778bec31b1ad42d1c582d6a04e4`.
+Status distribution: INCOMPLETE 434, COMPLETE 74, NOT_APPLICABLE 10.
+The output is 566 590 bytes with deterministic LF line endings and SHA-256
+`92b2ef07718bc2c3acf414e7ebb413e4102b37233af5182bf5325ecd5dfbad46`.
 
 ### Controlled Gemini extraction experiment (development only)
 
@@ -68,8 +68,8 @@ call, the average was 4,695 total tokens.
 
 | Command | Result |
 | --- | --- |
-| `python -X utf8 -m pytest code/tests -q` | **127 passed, 1 skipped** (the opt-in live Gemini smoke test is skipped by default), exit 0 |
-| `python -X utf8 code/evaluation/main.py` | 0 contract errors; sample status accuracy 29/32; exact cases 12/32; step TP/FP/FN 166/0/27; precision 1.0, recall 0.860104, F1 0.924791 |
+| `python -X utf8 -m pytest code/tests -q` | **202 passed, 1 skipped** (the opt-in live Gemini smoke test is skipped by default), exit 0 |
+| `python -X utf8 code/evaluation/main.py` | 0 contract errors; sample status accuracy 25/32; exact cases 12/32; step TP/FP/FN 156/10/37; precision 0.939759, recall 0.808290, F1 0.869081 |
 | `python -X utf8 code/main.py` (repeat) | byte-identical `output.csv` (deterministic) |
 
 ## 4. Environment
@@ -77,7 +77,7 @@ call, the average was 4,695 total tokens.
 - Python 3.14.7, Windows 10 (10.0.19045)
 - `pypdf` 6.21.2 (PDF evidence extraction)
 - `pydantic` 2.13.5 and `google-genai` 1.75.0 (optional live Gemini refresh; not used by the final offline run)
-- `pytest` 9.1.1 (tests only, not required at runtime)
+- `pytest` 9.1.1 (tests only; declared in `requirements.txt`)
 - Standard library for everything else (csv, json, sqlite3, re, dataclasses)
 
 The final offline run has no model calls, so its provider cost is exactly
