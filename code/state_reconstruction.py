@@ -20,6 +20,7 @@ from evidence_parser import (
     _normalize_system_id,
     _parse_iso,
 )
+from policy_engine import PolicyEngine
 
 
 @dataclass
@@ -271,6 +272,13 @@ def _linked_activity_verifications(
     return steps
 
 
+def _load_default_policy() -> PolicyEngine:
+    path = Path(__file__).resolve().parents[1] / "dataset" / "deletion_rules.csv"
+    if path.exists():
+        return PolicyEngine.from_csv(path)
+    return PolicyEngine([])
+
+
 def reconstruct_case_state(
     case_id: str,
     audit_at: datetime,
@@ -280,6 +288,7 @@ def reconstruct_case_state(
     system_activity: Optional[list[dict]] = None,
     require_evidence: bool = False,
     not_before: Optional[datetime] = None,
+    policy_engine: Optional[PolicyEngine] = None,
 ) -> CaseAuditResult:
     """Reconstruct system state for a given case and generate the audit plan.
 
@@ -296,6 +305,8 @@ def reconstruct_case_state(
             deletion_status="NOT_APPLICABLE",
             steps=[],
         )
+
+    policy = policy_engine or _load_default_policy()
 
     # 1. Retrieve admissible evidence for the identifiers.
     records = corpus.get_records_for_identifiers(
@@ -334,22 +345,49 @@ def reconstruct_case_state(
     remediations: list[AuditStep] = []
     verifications: list[AuditStep] = []
     retention_gap = False
+    policy_gap = False
 
-    # 3. Apply deletion_rules.csv to each observed resource
+    # 3. Apply the supplied policy rules to each observed resource.
     for (sys_id, res_id), rec in sorted(latest_by_resource.items()):
         cat = rec.data_category
         eid = rec.evidence_id
         state = _effective_state(rec)
 
-        if cat in DELETE_CATEGORIES:
-            if state == "PRESENT":
+        if cat == "DATA_FLOW":
+            # Data flows are operational mechanisms rather than a rule category.
+            if state == "ACTIVE":
+                findings.append(_step("FINDING", sys_id, res_id, "REPORT_ACTIVE_DATA_FLOW", "ACTIVE", eid))
+                remediations.append(_step("REMEDIATION", sys_id, res_id, "DISABLE_DATA_FLOW", "DISABLED"))
+                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED"))
+            elif state == "DISABLED":
+                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED", eid))
+            continue
+
+        if cat == "BACKUP_ARCHIVE":
+            # The policy action is RETAIN; restore access must also be blocked.
+            if state == "ACTIVE":
+                findings.append(_step("FINDING", sys_id, res_id, "REPORT_RESTORE_RISK", "ACTIVE", eid))
+                remediations.append(_step("REMEDIATION", sys_id, res_id, "BLOCK_RESTORE", "BLOCKED"))
+                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED"))
+            elif state == "BLOCKED":
+                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED", eid))
+            continue
+
+        decision = policy.decide(rec, audit_at, user_identifiers)
+        if not decision.supported or (decision.rule_id and not decision.action):
+            policy_gap = True
+            continue
+        action = decision.action
+
+        if action == "DELETE":
+            if state == "ABSENT":
+                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT", eid))
+            elif state in ("PRESENT", "REDACTED", "ANONYMIZED", "ACTIVE"):
                 findings.append(_step("FINDING", sys_id, res_id, "REPORT_REMAINING_RECORD", "PRESENT", eid))
                 remediations.append(_step("REMEDIATION", sys_id, res_id, "DELETE_RECORD", "ABSENT"))
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT"))
-            elif state == "ABSENT":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT", eid))
 
-        elif cat in REDACT_CATEGORIES:
+        elif action == "REDACT":
             if state == "PRESENT":
                 findings.append(_step("FINDING", sys_id, res_id, "REPORT_EXPOSED_PII", "PRESENT", eid))
                 remediations.append(_step("REMEDIATION", sys_id, res_id, "REDACT_RECORD", "REDACTED"))
@@ -357,7 +395,7 @@ def reconstruct_case_state(
             elif state == "REDACTED":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_REDACTED", "REDACTED", eid))
 
-        elif cat in ANONYMIZE_CATEGORIES:
+        elif action == "ANONYMIZE":
             if state == "PRESENT":
                 findings.append(_step("FINDING", sys_id, res_id, "REPORT_EXPOSED_PII", "PRESENT", eid))
                 remediations.append(_step("REMEDIATION", sys_id, res_id, "ANONYMIZE_RECORD", "ANONYMIZED"))
@@ -365,32 +403,16 @@ def reconstruct_case_state(
             elif state == "ANONYMIZED":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ANONYMIZED", "ANONYMIZED", eid))
 
-        elif cat == "DATA_FLOW":
-            if state == "ACTIVE":
-                findings.append(_step("FINDING", sys_id, res_id, "REPORT_ACTIVE_DATA_FLOW", "ACTIVE", eid))
-                remediations.append(_step("REMEDIATION", sys_id, res_id, "DISABLE_DATA_FLOW", "DISABLED"))
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED"))
-            elif state == "DISABLED":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED", eid))
-
-        elif cat == "BACKUP_ARCHIVE":
-            if state == "ACTIVE":
-                findings.append(_step("FINDING", sys_id, res_id, "REPORT_RESTORE_RISK", "ACTIVE", eid))
-                remediations.append(_step("REMEDIATION", sys_id, res_id, "BLOCK_RESTORE", "BLOCKED"))
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED"))
-            elif state == "BLOCKED":
-                verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED", eid))
-
-        elif cat in RETAIN_CATEGORIES:
+        elif action == "RETAIN":
             if state == "PRESENT":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_PRESENT", "PRESENT", eid))
             elif state == "ABSENT":
-                # A policy-required retained record is missing: the case cannot be
-                # proven complete, and no allowed operation can remediate it.
+                # A policy-required retained record is missing: the case cannot
+                # be proven complete, and no allowed operation can remediate it.
                 retention_gap = True
 
     # 4. Determine overall deletion status
-    if findings or retention_gap:
+    if findings or retention_gap or policy_gap:
         status = "INCOMPLETE"
     elif require_evidence and not verifications:
         # No admissible evidence proves the compliant state.
