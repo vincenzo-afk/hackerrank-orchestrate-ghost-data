@@ -19,17 +19,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Late-imported helpers for the end-to-end pipeline (optional at import time)
-try:
-    from evidence_parser import load_evidence_corpus, EvidenceCorpus
-    from state_reconstruction import reconstruct_case_state, AuditStep
-    from policy_engine import PolicyEngine
-except Exception:  # pragma: no cover - keep module importable in minimal envs
-    load_evidence_corpus = None  # type: ignore
-    EvidenceCorpus = None  # type: ignore
-    reconstruct_case_state = None  # type: ignore
-    AuditStep = None  # type: ignore
-    PolicyEngine = None  # type: ignore
+# These modules are required for a production audit.  An import failure must
+# stop the run rather than silently yielding an apparently valid CSV.
+from evidence_parser import load_evidence_corpus, EvidenceCorpus
+from state_reconstruction import reconstruct_case_state, AuditStep
+from policy_engine import PolicyEngine
 
 # Reconfigure stdout/stderr to UTF-8 so Japanese/accents print cleanly on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -114,14 +108,14 @@ class IdentityFingerprint:
 
     @property
     def all_identifiers(self) -> set[str]:
-        """Union of all identifiers, case-preserved, for broad matching."""
-        ids: set[str] = set()
-        ids.add(self.user_id)
-        ids.update(self.all_emails)
-        ids.update(self.old_email_hashes)
-        ids.add(self.current_email_hash)
-        ids.add(self.phone)
-        ids.update(self.old_phones)
+        """Union of all non-empty identifiers, case-preserved, for matching."""
+        ids: set[str] = {self.user_id}
+        ids.update(e for e in self.all_emails if e)
+        ids.update(h for h in self.old_email_hashes if h)
+        ids.update(p for p in self.old_phones if p)
+        for value in (self.current_email_hash, self.phone):
+            if value:
+                ids.add(value)
         # Also add uppercase variants (evidence uses mixed case)
         return ids | {i.upper() for i in ids}
 
@@ -544,53 +538,131 @@ def classify_request(request_text: str) -> dict:
 # Module 3: Identity resolution
 # ---------------------------------------------------------------------------
 
+def _identity_values_as_of(
+    datasets: Datasets,
+    user_id: str,
+    as_of: datetime,
+) -> tuple[IdentityFingerprint, set[str]]:
+    """Build identifiers and email aliases known at or before ``as_of``.
+
+    Audit rows whose event is after the case's audit time are excluded.  The
+    current snapshot is usable only when its own update time is not later than
+    the audit time.  Both the old and new values of every pre-audit change are
+    retained because either can appear in evidence.
+    """
+    identity = datasets.identities[user_id]
+    snapshot_valid = identity.updated_at <= as_of
+    values = {"email": [], "email_hash": [], "phone": []}
+    latest_new = {"email": "", "email_hash": "", "phone": ""}
+    latest_time = {"email": None, "email_hash": None, "phone": None}
+
+    for row in datasets.audit_log:
+        if row["user_id"].strip() != user_id:
+            continue
+        field = row["field_name"].strip()
+        if field not in values:
+            continue
+        event_time = _parse_iso(row["event_time"].strip())
+        if event_time > as_of:
+            continue
+        old_value = row["old_value"].strip()
+        new_value = row["new_value"].strip()
+        if old_value:
+            values[field].append(old_value)
+        if new_value:
+            values[field].append(new_value)
+            if latest_time[field] is None or event_time >= latest_time[field]:
+                latest_time[field] = event_time
+                latest_new[field] = new_value
+
+    # Deduplicate while preserving no particular order; identity matching is
+    # set-based and citations do not depend on identifier order.
+    values = {field: list(dict.fromkeys(items)) for field, items in values.items()}
+
+    current_email = identity.current_email if snapshot_valid else latest_new["email"]
+    current_hash = identity.email_hash if snapshot_valid else latest_new["email_hash"]
+    current_phone = identity.phone if snapshot_valid else latest_new["phone"]
+
+    fp = IdentityFingerprint(
+        user_id=user_id,
+        name=identity.name,
+        current_email=current_email,
+        phone=current_phone,
+        current_email_hash=current_hash,
+        old_emails=values["email"],
+        old_email_hashes=values["email_hash"],
+        old_phones=values["phone"],
+    )
+    aliases = {v.lower() for v in values["email"] if v}
+    if snapshot_valid:
+        aliases.add(identity.current_email.lower())
+    elif current_email:
+        aliases.add(current_email.lower())
+    return fp, aliases
+
+
 def resolve_identity(
     email: str,
     datasets: Datasets,
+    as_of: Optional[datetime] = None,
 ) -> IdentityResolutionResult:
     """Resolve a request email to a user identity fingerprint.
 
     Strategy:
-    1. Direct match: look up email (case-insensitive) in current user_identities.
-    2. Historical match: look up email (case-insensitive) in user_audit_log
-       old_value where field_name = 'email'.
+    1. Direct match: look up email (case-insensitive) in current user_identities
+       when the current snapshot is not newer than ``as_of``.
+    2. Historical match: look up email in user_audit_log values whose event is
+       at or before ``as_of``.
     3. If both match the same user_id -> use that (consistent result).
-    4. If they match different users -> return 'ambiguous' (log & skip).
+    4. If they match different users -> return 'ambiguous'.
     5. If no match -> return 'not_found'.
 
-    Decoy protection: we match only complete email addresses (not substrings),
-    and we require the match to be in either the current snapshot or the
-    historical record — not inferred from similarity.
+    When ``as_of`` is omitted, the full supplied history is used for backward
+    compatibility with direct unit callers; the production pipeline always
+    passes the case's ``audit_at``.
     """
     email_lower = email.lower()
 
-    # Step 1: direct current-email match
-    current_uid = datasets.email_to_user_id.get(email_lower)
+    # Step 1: direct current-email match, bounded by snapshot update time.
+    current_uid = None
+    if as_of is None:
+        current_uid = datasets.email_to_user_id.get(email_lower)
+    else:
+        candidate_uid = datasets.email_to_user_id.get(email_lower)
+        if candidate_uid:
+            identity = datasets.identities[candidate_uid]
+            if identity.updated_at <= as_of:
+                current_uid = candidate_uid
 
-    # Step 2: historical email match
-    historical_uid: Optional[str] = None
+    # Step 2: historical email match.  For bounded callers, both old and new
+    # values of a pre-audit change are valid identifiers; future changes are
+    # excluded.
+    historical_uids: set[str] = set()
     for row in datasets.audit_log:
-        if (
-            row["field_name"].strip() == "email"
-            and row["old_value"].strip().lower() == email_lower
-        ):
-            candidate = row["user_id"].strip()
-            if historical_uid is not None and historical_uid != candidate:
-                # Multiple different users had this as an old email — ambiguous
-                return IdentityResolutionResult(
-                    status="ambiguous",
-                    message=(
-                        f"Email '{email}' appears as a historical email for "
-                        f"multiple users: {historical_uid!r} and {candidate!r}. "
-                        "Cannot resolve safely."
-                    ),
-                    candidates=[historical_uid, candidate],
-                )
-            historical_uid = candidate
+        if row["field_name"].strip() != "email":
+            continue
+        event_time = _parse_iso(row["event_time"].strip())
+        if as_of is not None and event_time > as_of:
+            continue
+        candidates = [row["old_value"].strip()]
+        if as_of is not None:
+            candidates.append(row["new_value"].strip())
+        if any(candidate.lower() == email_lower for candidate in candidates if candidate):
+            historical_uids.add(row["user_id"].strip())
+
+    if len(historical_uids) > 1:
+        return IdentityResolutionResult(
+            status="ambiguous",
+            message=(
+                f"Email '{email}' appears as a historical email for multiple "
+                f"users: {sorted(historical_uids)!r}. Cannot resolve safely."
+            ),
+            candidates=sorted(historical_uids),
+        )
+    historical_uid = next(iter(historical_uids), None)
 
     # Determine final user_id
     if current_uid and historical_uid and current_uid != historical_uid:
-        # Email is current for one user AND historical for a different user
         return IdentityResolutionResult(
             status="ambiguous",
             message=(
@@ -614,18 +686,24 @@ def resolve_identity(
             message=f"No user found for email '{email}' (current or historical).",
         )
 
-    # Build fingerprint
     identity = datasets.identities[resolved_uid]
-    fp = IdentityFingerprint(
-        user_id=resolved_uid,
-        name=identity.name,
-        current_email=identity.current_email,
-        phone=identity.phone,
-        current_email_hash=identity.email_hash,
-        old_emails=datasets.historical_emails.get(resolved_uid, []),
-        old_email_hashes=datasets.historical_email_hashes.get(resolved_uid, []),
-        old_phones=datasets.historical_phones.get(resolved_uid, []),
-    )
+    if as_of is None:
+        fp = IdentityFingerprint(
+            user_id=resolved_uid,
+            name=identity.name,
+            current_email=identity.current_email,
+            phone=identity.phone,
+            current_email_hash=identity.email_hash,
+            old_emails=datasets.historical_emails.get(resolved_uid, []),
+            old_email_hashes=datasets.historical_email_hashes.get(resolved_uid, []),
+            old_phones=datasets.historical_phones.get(resolved_uid, []),
+        )
+    else:
+        fp, aliases = _identity_values_as_of(datasets, resolved_uid, as_of)
+        # The request email is itself an observed identifier at request time,
+        # even when the current snapshot is later than the audit cutoff.
+        if email_lower not in aliases:
+            fp.old_emails = list(dict.fromkeys(fp.old_emails + [email]))
 
     return IdentityResolutionResult(
         status="found",
@@ -695,7 +773,7 @@ def main() -> None:
     print("Running identity resolution on sample requests...")
     results: dict[str, IdentityResolutionResult] = {}
     for req in datasets.sample_requests:
-        result = resolve_identity(req.email, datasets)
+        result = resolve_identity(req.email, datasets, as_of=req.audit_at)
         results[req.case_id] = result
         status_str = result.status.upper()
         if result.fingerprint:
@@ -742,7 +820,7 @@ def audit_request(req, datasets, corpus) -> tuple[str, list, Optional[str]]:
     if not classify_request(req.request_text).get("is_deletion", False):
         return "NOT_APPLICABLE", [], None
 
-    fp = resolve_identity(req.email, datasets).fingerprint
+    fp = resolve_identity(req.email, datasets, as_of=req.audit_at).fingerprint
     if fp is None:
         # Still a deletion request: claiming NOT_APPLICABLE would assert the
         # person never asked for deletion. Without a resolved identity the
@@ -761,9 +839,10 @@ def audit_request(req, datasets, corpus) -> tuple[str, list, Optional[str]]:
             not_before=req.requested_at,
             policy_engine=datasets.policy,
         )
-    except Exception as exc:  # pragma: no cover - defensive
-        print(f"WARN {req.case_id}: reconstruction failed: {exc}", file=sys.stderr)
-        return "INCOMPLETE", [], "reconstruction_error"
+    except Exception as exc:
+        raise RuntimeError(
+            f"{req.case_id}: state reconstruction failed; output was not generated"
+        ) from exc
 
     return result.deletion_status, result.steps, None
 
@@ -789,17 +868,14 @@ def run_full_pipeline(dataset_dir=None, output_path=None) -> Path:
     output_path = Path(output_path)
 
     datasets = load_datasets(dataset_dir)
-    corpus = load_evidence_corpus(dataset_dir) if load_evidence_corpus else None
+    corpus = load_evidence_corpus(dataset_dir)
 
     rows = []
     unresolved = 0
-    pipeline_errors = 0
     for req in datasets.deletion_requests:
         status, steps, failure = audit_request(req, datasets, corpus)
         if failure == "unresolved_identity":
             unresolved += 1
-        elif failure == "reconstruction_error":
-            pipeline_errors += 1
 
         rows.append((req.case_id, status, _serialize_steps(steps)))
 
@@ -807,10 +883,9 @@ def run_full_pipeline(dataset_dir=None, output_path=None) -> Path:
 
     _write_output_csv(rows, output_path)
 
-    if unresolved or pipeline_errors:
+    if unresolved:
         print(
-            f"  WARNING: {unresolved} unresolved identities, "
-            f"{pipeline_errors} reconstruction errors",
+            f"  WARNING: {unresolved} unresolved identities",
             file=sys.stderr,
         )
 
@@ -841,7 +916,7 @@ def main() -> None:
     print("Running identity resolution on sample requests...")
     results = {}
     for req in datasets.sample_requests:
-        result = resolve_identity(req.email, datasets)
+        result = resolve_identity(req.email, datasets, as_of=req.audit_at)
         results[req.case_id] = result
         status_str = result.status.upper()
         if result.fingerprint:

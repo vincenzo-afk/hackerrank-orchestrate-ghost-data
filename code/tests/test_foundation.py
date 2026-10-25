@@ -23,6 +23,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "code"))
 
+import main as main_module  # noqa: E402
 from main import (  # noqa: E402
     load_datasets,
     classify_request,
@@ -32,6 +33,7 @@ from main import (  # noqa: E402
     Datasets,
     IdentityResolutionResult,
     _parse_iso,
+    audit_request,
 )
 
 # ---------------------------------------------------------------------------
@@ -388,3 +390,29 @@ class TestFilterEvidence:
         assert "evidence_03" not in admissible_ids, (
             "evidence_03 should NOT be admissible for case_03"
         )
+
+
+def test_reconstruction_failure_propagates_and_does_not_become_incomplete(
+    datasets, monkeypatch
+):
+    request = next(r for r in datasets.sample_requests if r.case_id == "case_01")
+
+    def broken_reconstruction(**_kwargs):
+        raise ValueError("malformed evidence")
+
+    monkeypatch.setattr(main_module, "reconstruct_case_state", broken_reconstruction)
+    with pytest.raises(RuntimeError, match="case_01: state reconstruction failed") as exc:
+        audit_request(request, datasets, object())
+    assert isinstance(exc.value.__cause__, ValueError)
+
+
+def test_pipeline_failure_does_not_write_output(monkeypatch, tmp_path):
+    target = tmp_path / "output.csv"
+
+    def broken_audit(*_args, **_kwargs):
+        raise RuntimeError("case_001: state reconstruction failed; output was not generated")
+
+    monkeypatch.setattr(main_module, "audit_request", broken_audit)
+    with pytest.raises(RuntimeError, match="output was not generated"):
+        main_module.run_full_pipeline(output_path=target)
+    assert not target.exists()

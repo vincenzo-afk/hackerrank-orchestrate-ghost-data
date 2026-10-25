@@ -53,7 +53,7 @@ def test_legal_register_is_outside_current_request_windows():
         "user_29",
     }
     for request in datasets.deletion_requests:
-        fingerprint = resolve_identity(request.email, datasets).fingerprint
+        fingerprint = resolve_identity(request.email, datasets, as_of=request.audit_at).fingerprint
         if fingerprint is None or fingerprint.user_id not in users:
             continue
         assert not (request.requested_at <= capture <= request.audit_at)
