@@ -1,0 +1,821 @@
+{
+  "version": "image-observations-v1",
+  "model": "gemini-3.8-flash",
+  "prompt_version": "image-v1",
+  "images": {
+    "evidence_04": {
+      "file_path": "evidence/images/account_admin_console_20260926.png",
+      "sha256": "d5c32ca5b6e1a2b4bbe9f5d41835ef1fd5d4f7061dab9067a4f9f88cea3c1861",
+      "origin": "account_admin_portal",
+      "captured_at": "2026-09-26T11:00:00Z",
+      "observations": [
+        {
+          "resource_id": "account_5762",
+          "system_id": "account_service",
+          "data_category": "USER_PROFILE",
+          "state": "ACTIVE",
+          "identifiers": [
+            "+81 90 7610 2507",
+            "Haruka Sato",
+            "account_5762",
+            "haruka.s1838@zoho.com",
+            "user_11"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "Haruka Sato Silver\nuser_11 · account_5762\nEmail\nharuka.s1838@zoho.com\nPhone\n+81 90 7610 2507\nSignup channel\nmobile_app\nMarket\nJP\nPreferred language\nJapanese\nLast contact\n24 Sep 2026 09:14 JST\nDefault address 2-18-4 Kichijoji, Musashino, Tokyo 180-0004\nLoyalty tier Silver\nMember since 12 Jan 2024",
+            "shared_context": null,
+            "timestamp_text": "24 Sep 2026 09:14 JST",
+            "confidence": 0.95,
+            "limitations": "Account status ACTIVE is normalized from the customer-operations console; support_9538 is excluded as a page-level reference without a visible support-message body.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/account_admin_console_20260926.png",
+            "source_sha256": "d5c32ca5b6e1a2b4bbe9f5d41835ef1fd5d4f7061dab9067a4f9f88cea3c1861",
+            "normalization": "Account status ACTIVE is normalized from the customer-operations console; support_9538 is excluded as a page-level reference without a visible support-message body."
+          },
+          "provenance": "gemini:evidence_04:account_5762"
+        }
+      ]
+    },
+    "evidence_09": {
+      "file_path": "evidence/images/search_index_inspector_20260901.png",
+      "sha256": "75afdb0ae53a4510c83399a70d88073cb4fb2747454095756e4ddad1a8c70605",
+      "origin": "search_index_admin",
+      "captured_at": "2026-09-01T06:00:00Z",
+      "observations": [
+        {
+          "resource_id": "search_428",
+          "system_id": "search_service",
+          "data_category": "SEARCH_INDEX_ENTRY",
+          "state": "PRESENT",
+          "identifiers": [
+            "Gabriel Silva",
+            "g.silva76@gmail.com",
+            "user_13"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "search_428 Gabriel Silva g.silva76@gmail.com user_13 9.84 05:58:21 UTC _index customer_directory_v3 _id search_428 display_name Gabriel Silva email g.silva76@gmail.com customer_reference user_13 indexed_at 2026-09-01T05:58:21Z",
+            "shared_context": false,
+            "timestamp_text": "2026-09-01T05:58:21Z",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/search_index_inspector_20260901.png",
+            "source_sha256": "75afdb0ae53a4510c83399a70d88073cb4fb2747454095756e4ddad1a8c70605"
+          },
+          "provenance": "gemini:evidence_09:search_428"
+        },
+        {
+          "resource_id": "search_1874",
+          "system_id": "search_service",
+          "data_category": "SEARCH_INDEX_ENTRY",
+          "state": "PRESENT",
+          "identifiers": [
+            "g.silva76.jr@gmail.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "search_1874 — g.silva76.jr@gmail.com — 4.12 05:55:03 UTC",
+            "shared_context": false,
+            "timestamp_text": "05:55:03 UTC",
+            "confidence": 0.95,
+            "limitations": "Display name and customer reference are omitted.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/search_index_inspector_20260901.png",
+            "source_sha256": "75afdb0ae53a4510c83399a70d88073cb4fb2747454095756e4ddad1a8c70605"
+          },
+          "provenance": "gemini:evidence_09:search_1874"
+        }
+      ]
+    },
+    "evidence_14": {
+      "file_path": "evidence/images/connector_management_console_20260807.png",
+      "sha256": "e81fabc93ea1b5f4c918d934cdb2bea05d61737adfcc29f281494f5d8ec46355",
+      "origin": "integration_admin",
+      "captured_at": "2026-08-07T08:00:00Z",
+      "observations": [
+        {
+          "resource_id": "data_flow_1121",
+          "system_id": "integration_service",
+          "data_category": "DATA_FLOW",
+          "state": "ACTIVE",
+          "identifiers": [
+            "jain.aditi@gmail.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "data_flow_1121 customer_analytics_warehouse jain.aditi@gmail.com Continuous 1,284 07:59:42 Status Healthy Owner Data Platform Destination customer_analytics_warehouse Selector jain.aditi@gmail.com Sync mode Continuous sync Last response 200 OK · 1.8 s",
+            "shared_context": "Northstar Shop / BridgeOps / Connections",
+            "timestamp_text": "07:59:42",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/connector_management_console_20260807.png",
+            "source_sha256": "e81fabc93ea1b5f4c918d934cdb2bea05d61737adfcc29f281494f5d8ec46355"
+          },
+          "provenance": "gemini:evidence_14:data_flow_1121"
+        },
+        {
+          "resource_id": "data_flow_9846",
+          "system_id": "integration_service",
+          "data_category": "DATA_FLOW",
+          "state": "ACTIVE",
+          "identifiers": [
+            "lucia-torres@gmail.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "data_flow_9846 customer_analytics_warehouse lucia-torres@gmail.com Continuous 842 07:59:36",
+            "shared_context": "Northstar Shop / BridgeOps / Connections",
+            "timestamp_text": "07:59:36",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/connector_management_console_20260807.png",
+            "source_sha256": "e81fabc93ea1b5f4c918d934cdb2bea05d61737adfcc29f281494f5d8ec46355"
+          },
+          "provenance": "gemini:evidence_14:data_flow_9846"
+        }
+      ]
+    },
+    "evidence_19": {
+      "file_path": "evidence/images/analytics_profile_view_20260713.png",
+      "sha256": "4e4cb259bc2010b622b0c53fe5872258f994fefc23452a83bb27473758693484",
+      "origin": "analytics_platform",
+      "captured_at": "2026-07-13T10:00:00Z",
+      "observations": [
+        {
+          "resource_id": "analytics_7438",
+          "system_id": "analytics_platform",
+          "data_category": "ANALYTICS_PROFILE",
+          "state": "PRESENT",
+          "identifiers": [
+            "Omar Darwish",
+            "analytics_7438",
+            "darwish.omar@icloud.com",
+            "user_20"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "Omar Darwish\nuser_20 · analytics_7438 · darwish.omar@icloud.com\nMarket AE\nAudience Returning shopper\nInterest Coffee & dining\nLast activity 13 Jul 2026 14:22 UTC\nFirst seen 21 Apr 2026 09:14 UTC",
+            "shared_context": null,
+            "timestamp_text": "13 Jul 2026 14:22 UTC",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/analytics_profile_view_20260713.png",
+            "source_sha256": "4e4cb259bc2010b622b0c53fe5872258f994fefc23452a83bb27473758693484"
+          },
+          "provenance": "gemini:evidence_19:analytics_7438"
+        }
+      ]
+    },
+    "evidence_23": {
+      "file_path": "evidence/images/customer_export_console_20260618.png",
+      "sha256": "18b95c1bd8b8956e40216df935498a9f3c181ea2a69b5cd6d3c0841a816d5557",
+      "origin": "export_service",
+      "captured_at": "2026-06-18T12:00:00Z",
+      "observations": [
+        {
+          "resource_id": "export_1261",
+          "system_id": "export_service",
+          "data_category": "USER_EXPORT",
+          "state": "PRESENT",
+          "identifiers": [
+            "marcus.lee@northstar.shop"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "export_1261 customer_export_1261.zip marcus.lee@northstar.shop Collecting 20 Jun 14:18 UTC",
+            "shared_context": "Northstar Shop Customer Download Center data export list",
+            "timestamp_text": "20 Jun 14:18 UTC",
+            "confidence": 0.95,
+            "limitations": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/customer_export_console_20260618.png",
+            "source_sha256": "18b95c1bd8b8956e40216df935498a9f3c181ea2a69b5cd6d3c0841a816d5557",
+            "normalization": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses."
+          },
+          "provenance": "gemini:evidence_23:export_1261"
+        },
+        {
+          "resource_id": "export_1260",
+          "system_id": "export_service",
+          "data_category": "USER_EXPORT",
+          "state": "PRESENT",
+          "identifiers": [
+            "ingrid.dahl@outlook.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "export_1260 customer_export_1260.zip ingrid.dahl@outlook.com Ready 18 Jun 06:42 UTC Owner ingrid.dahl@outlook.com Created 18 Jun 2026 06:42 UTC Expires 25 Jun 2026 06:42 UTC Size 18.4 MB Checksum SHA-256 · 41ca09... Included Profile · Orders · Saved addresses",
+            "shared_context": "Northstar Shop Customer Download Center data export list and export details panel",
+            "timestamp_text": "18 Jun 2026 06:42 UTC",
+            "confidence": 0.98,
+            "limitations": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/customer_export_console_20260618.png",
+            "source_sha256": "18b95c1bd8b8956e40216df935498a9f3c181ea2a69b5cd6d3c0841a816d5557",
+            "normalization": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses."
+          },
+          "provenance": "gemini:evidence_23:export_1260"
+        },
+        {
+          "resource_id": "export_1259",
+          "system_id": "export_service",
+          "data_category": "USER_EXPORT",
+          "state": "PRESENT",
+          "identifiers": [
+            "sara.kim@northstar.shop"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "export_1259 customer_export_1259.zip sara.kim@northstar.shop Packaging 17 Jun 11:03 UTC",
+            "shared_context": "Northstar Shop Customer Download Center data export list",
+            "timestamp_text": "17 Jun 11:03 UTC",
+            "confidence": 0.95,
+            "limitations": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/customer_export_console_20260618.png",
+            "source_sha256": "18b95c1bd8b8956e40216df935498a9f3c181ea2a69b5cd6d3c0841a816d5557",
+            "normalization": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses."
+          },
+          "provenance": "gemini:evidence_23:export_1259"
+        },
+        {
+          "resource_id": "export_1258",
+          "system_id": "export_service",
+          "data_category": "USER_EXPORT",
+          "state": "PRESENT",
+          "identifiers": [
+            "daniel.park@northstar.shop"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "export_1258 customer_export_1258.zip daniel.park@northstar.shop Ready 16 Jun 09:27 UTC",
+            "shared_context": "Northstar Shop Customer Download Center data export list",
+            "timestamp_text": "16 Jun 09:27 UTC",
+            "confidence": 0.95,
+            "limitations": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/customer_export_console_20260618.png",
+            "source_sha256": "18b95c1bd8b8956e40216df935498a9f3c181ea2a69b5cd6d3c0841a816d5557",
+            "normalization": "Existence is normalized to PRESENT; visible statuses include Collecting, Packaging, and Ready. Only export_1260 belongs to the linked customer; other rows have internal staff addresses."
+          },
+          "provenance": "gemini:evidence_23:export_1258"
+        }
+      ]
+    },
+    "evidence_28": {
+      "file_path": "evidence/images/support_ticket_console_20260524.png",
+      "sha256": "542b7aec17e6b2f38827896e7eb52c70e4bfaaca22433621be1f80f54884e944",
+      "origin": "support_platform",
+      "captured_at": "2026-05-24T07:00:00Z",
+      "observations": [
+        {
+          "resource_id": "support_1034",
+          "system_id": "support_platform",
+          "data_category": "SUPPORT_MESSAGE",
+          "state": "PRESENT",
+          "identifiers": [
+            "Kofi Agyeman",
+            "Maya Chen",
+            "kagyeman8947@fastmail.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "CS-5034 · Where is my delivery? SLA 01:42 support_1034 · Kofi Agyeman · Normal priority Customer Kofi Agyeman Email kagyeman8947@fastmail.com Assigned Maya Chen Tags Delivery · Tracking · Order update Conversation 09:12 Kofi Agyeman: Could you let me know where my order is and when it is expected to arrive? 09:13 Northstar Bot: We received your message and are checking the order details. 09:28 Maya Chen: The parcel reached the regional hub and is on track for delivery on 26 May. 09:35 Kofi Agyeman: Thanks for the update.",
+            "shared_context": true,
+            "timestamp_text": "Updated moments ago",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/support_ticket_console_20260524.png",
+            "source_sha256": "542b7aec17e6b2f38827896e7eb52c70e4bfaaca22433621be1f80f54884e944"
+          },
+          "provenance": "gemini:evidence_28:support_1034"
+        }
+      ]
+    },
+    "evidence_32": {
+      "file_path": "evidence/images/backup_restore_console_20260429.png",
+      "sha256": "2c246aa5843bec609b9ddfdf1154cd81e0fd61996f83954735e9856e48c18bf3",
+      "origin": "backup_service",
+      "captured_at": "2026-04-29T09:00:00Z",
+      "observations": [
+        {
+          "resource_id": "backup_9291",
+          "system_id": "backup_service",
+          "data_category": "BACKUP_ARCHIVE",
+          "state": "ACTIVE",
+          "identifiers": [
+            "bluepeakco@outlook.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "backup_9291 bluepeakco@outlook.com ap-southeast-1 26 Apr 02:00 102.3 GB AES-256 Archive",
+            "shared_context": "Northstar Shop / Vault Recovery Manager / Customer-platform archives",
+            "timestamp_text": "26 Apr 02:00",
+            "confidence": 1.0,
+            "limitations": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/backup_restore_console_20260429.png",
+            "source_sha256": "2c246aa5843bec609b9ddfdf1154cd81e0fd61996f83954735e9856e48c18bf3",
+            "normalization": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment."
+          },
+          "provenance": "gemini:evidence_32:backup_9291"
+        },
+        {
+          "resource_id": "backup_9288",
+          "system_id": "backup_service",
+          "data_category": "BACKUP_ARCHIVE",
+          "state": "ACTIVE",
+          "identifiers": [
+            "miller.logistics@company.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "backup_9288 miller.logistics@company.com us-west-2 26 Apr 02:00 67.1 GB AES-256 Archive",
+            "shared_context": "Northstar Shop / Vault Recovery Manager / Customer-platform archives",
+            "timestamp_text": "26 Apr 02:00",
+            "confidence": 1.0,
+            "limitations": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/backup_restore_console_20260429.png",
+            "source_sha256": "2c246aa5843bec609b9ddfdf1154cd81e0fd61996f83954735e9856e48c18bf3",
+            "normalization": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment."
+          },
+          "provenance": "gemini:evidence_32:backup_9288"
+        },
+        {
+          "resource_id": "backup_9287",
+          "system_id": "backup_service",
+          "data_category": "BACKUP_ARCHIVE",
+          "state": "ACTIVE",
+          "identifiers": [
+            "areed1433@gmail.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "backup_9287 areed1433@gmail.com eu-west-1 26 Apr 02:00 84.7 GB AES-256 Archive Account areed1433@gmail.com Path s3://northstar-backups/customer-platform/weekly/segment-42-20260426.tar.zst Region eu-west-1 Created 26 Apr 2026 02:00 UTC Encryption AES-256 Checksum Verified Last drill 29 Mar 2026 Retention end 26 Jul 2026",
+            "shared_context": "Northstar Shop / Vault Recovery Manager / Customer-platform archives",
+            "timestamp_text": "26 Apr 2026 02:00 UTC",
+            "confidence": 1.0,
+            "limitations": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/backup_restore_console_20260429.png",
+            "source_sha256": "2c246aa5843bec609b9ddfdf1154cd81e0fd61996f83954735e9856e48c18bf3",
+            "normalization": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment."
+          },
+          "provenance": "gemini:evidence_32:backup_9287"
+        },
+        {
+          "resource_id": "backup_9286",
+          "system_id": "backup_service",
+          "data_category": "BACKUP_ARCHIVE",
+          "state": "ACTIVE",
+          "identifiers": [
+            "summit-retail@company.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "backup_9286 summit-retail@company.com us-east-1 26 Apr 02:00 91.4 GB AES-256 Archive",
+            "shared_context": "Northstar Shop / Vault Recovery Manager / Customer-platform archives",
+            "timestamp_text": "26 Apr 02:00",
+            "confidence": 1.0,
+            "limitations": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/backup_restore_console_20260429.png",
+            "source_sha256": "2c246aa5843bec609b9ddfdf1154cd81e0fd61996f83954735e9856e48c18bf3",
+            "normalization": "The screenshot shows archived backups; restore_allowed is not visibly stated. ACTIVE is a conservative normalization consistent with the restore-console context and prior validated treatment."
+          },
+          "provenance": "gemini:evidence_32:backup_9286"
+        }
+      ]
+    },
+    "evidence_37": {
+      "file_path": "evidence/images/security_audit_explorer_20260905.png",
+      "sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b",
+      "origin": "security_service",
+      "captured_at": "2026-09-05T07:00:00Z",
+      "observations": [
+        {
+          "resource_id": "audit_record_003",
+          "system_id": "security_service",
+          "data_category": "SECURITY_AUDIT_LOG",
+          "state": "PRESENT",
+          "identifiers": [
+            "user_03"
+          ],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "audit_record_003 · Raw event event_type account_closure_recorded subject user_03 actor automated account workflow recorded_at 2026-08-25T04:03:00Z fingerprint 8f0c...31ad signature Valid journal 2026-Q3",
+            "shared_context": "Northstar Shop Sentinel Account events",
+            "timestamp_text": "2026-08-25T04:03:00Z",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/security_audit_explorer_20260905.png",
+            "source_sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b"
+          },
+          "provenance": "gemini:evidence_37:audit_record_003"
+        },
+        {
+          "resource_id": "audit_record_002",
+          "system_id": "security_service",
+          "data_category": "SECURITY_AUDIT_LOG",
+          "state": "PRESENT",
+          "identifiers": [
+            "user_03"
+          ],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "25 Aug 03:21 Session revoked Session management user_03 Security system Valid audit_record_002",
+            "shared_context": "Northstar Shop Sentinel Account events",
+            "timestamp_text": "25 Aug 03:21",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/security_audit_explorer_20260905.png",
+            "source_sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b"
+          },
+          "provenance": "gemini:evidence_37:audit_record_002"
+        },
+        {
+          "resource_id": "audit_record_001",
+          "system_id": "security_service",
+          "data_category": "SECURITY_AUDIT_LOG",
+          "state": "PRESENT",
+          "identifiers": [
+            "user_03"
+          ],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "24 Aug 16:14 Recovery challenge completed Authentication user_03 User (self) Valid audit_record_001",
+            "shared_context": "Northstar Shop Sentinel Account events",
+            "timestamp_text": "24 Aug 16:14",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/security_audit_explorer_20260905.png",
+            "source_sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b"
+          },
+          "provenance": "gemini:evidence_37:audit_record_001"
+        },
+        {
+          "resource_id": "audit_record_006",
+          "system_id": "security_service",
+          "data_category": "SECURITY_AUDIT_LOG",
+          "state": "PRESENT",
+          "identifiers": [
+            "user_03"
+          ],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "22 Aug 11:27 Email change confirmed Profile update user_03 User (self) Valid audit_record_006",
+            "shared_context": "Northstar Shop Sentinel Account events",
+            "timestamp_text": "22 Aug 11:27",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/security_audit_explorer_20260905.png",
+            "source_sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b"
+          },
+          "provenance": "gemini:evidence_37:audit_record_006"
+        },
+        {
+          "resource_id": "audit_record_005",
+          "system_id": "security_service",
+          "data_category": "SECURITY_AUDIT_LOG",
+          "state": "PRESENT",
+          "identifiers": [
+            "user_03"
+          ],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "20 Aug 09:42 Login from new device Authentication user_03 User (self) Valid audit_record_005",
+            "shared_context": "Northstar Shop Sentinel Account events",
+            "timestamp_text": "20 Aug 09:42",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/security_audit_explorer_20260905.png",
+            "source_sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b"
+          },
+          "provenance": "gemini:evidence_37:audit_record_005"
+        },
+        {
+          "resource_id": "audit_record_004",
+          "system_id": "security_service",
+          "data_category": "SECURITY_AUDIT_LOG",
+          "state": "PRESENT",
+          "identifiers": [
+            "user_03"
+          ],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "18 Aug 14:05 Password changed Authentication user_03 User (self) Valid audit_record_004",
+            "shared_context": "Northstar Shop Sentinel Account events",
+            "timestamp_text": "18 Aug 14:05",
+            "confidence": 0.95,
+            "limitations": null,
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/security_audit_explorer_20260905.png",
+            "source_sha256": "ca59f693f4e7002466b3fdeaf1bb6763618770963dd811b60003772d07b4b03b"
+          },
+          "provenance": "gemini:evidence_37:audit_record_004"
+        }
+      ]
+    },
+    "evidence_42": {
+      "file_path": "evidence/images/deleted_account_reference_20260310.png",
+      "sha256": "68c28a72afd6ed184d5990d15c543f8a516face204f0360f732755a8a63c28be",
+      "origin": "identity_service",
+      "captured_at": "2026-03-10T06:00:00Z",
+      "observations": [
+        {
+          "resource_id": "tombstone_user_17",
+          "system_id": "identity_service",
+          "data_category": "ACCOUNT_TOMBSTONE",
+          "state": "REDACTED",
+          "identifiers": [
+            "user_17"
+          ],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "user_17\nRetained reference\nCustomer key · Account Platform · eu-west\nReference type Customer key\nCreated 11 Jan 2024 08:42 UTC\nMost recent update 10 Mar 2026 07:18 UTC\nOwner team Account Platform",
+            "shared_context": null,
+            "timestamp_text": "10 Mar 2026 07:18 UTC",
+            "confidence": 0.95,
+            "limitations": "Resource ID tombstone_user_17 is a normalized stable reference derived from visible user_17 plus 'Retained reference'/'Customer key'; the screen does not print a tombstone_* identifier.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/deleted_account_reference_20260310.png",
+            "source_sha256": "68c28a72afd6ed184d5990d15c543f8a516face204f0360f732755a8a63c28be",
+            "reference_type": "Customer key",
+            "direct_identifiers_present": false,
+            "normalization": "Resource ID tombstone_user_17 is a normalized stable reference derived from visible user_17 plus 'Retained reference'/'Customer key'; the screen does not print a tombstone_* identifier."
+          },
+          "provenance": "gemini:evidence_42:tombstone_user_17"
+        }
+      ]
+    },
+    "evidence_46": {
+      "file_path": "evidence/images/object_storage_browser_20260213.png",
+      "sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+      "origin": "object_storage",
+      "captured_at": "2026-02-13T08:00:00Z",
+      "observations": [
+        {
+          "resource_id": "delivery_confirmation_19",
+          "system_id": "export_service",
+          "data_category": "SUPPORT_ATTACHMENT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "delivery_confirmation_19.pdf 684 KB 12 Feb 18:42 Standard v3 Size 684 KB Version v3 Content type application/pdf Encryption AES-256 Checksum e71b6d... Uploader support-service Modified 12 Feb 2026 18:42 UTC",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "12 Feb 2026 18:42 UTC",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/delivery_confirmation_19.pdf",
+            "file_name": "delivery_confirmation_19.pdf",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:delivery_confirmation_19"
+        },
+        {
+          "resource_id": "delivery_confirmation_20",
+          "system_id": "export_service",
+          "data_category": "SUPPORT_ATTACHMENT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "delivery_confirmation_20.pdf 712 KB 11 Feb 14:17 Standard v1",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "11 Feb 14:17",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/delivery_confirmation_20.pdf",
+            "file_name": "delivery_confirmation_20.pdf",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:delivery_confirmation_20"
+        },
+        {
+          "resource_id": "return_label_4821",
+          "system_id": "export_service",
+          "data_category": "SUPPORT_ATTACHMENT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "return_label_4821.pdf 203 KB 10 Feb 09:33 Standard v1",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "10 Feb 09:33",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/return_label_4821.pdf",
+            "file_name": "return_label_4821.pdf",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:return_label_4821"
+        },
+        {
+          "resource_id": "return_label_4876",
+          "system_id": "export_service",
+          "data_category": "SUPPORT_ATTACHMENT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "return_label_4876.pdf 198 KB 11 Feb 16:05 Standard v2",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "11 Feb 16:05",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/return_label_4876.pdf",
+            "file_name": "return_label_4876.pdf",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:return_label_4876"
+        },
+        {
+          "resource_id": "invoice_NS-10493",
+          "system_id": "export_service",
+          "data_category": "SUPPORT_ATTACHMENT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "invoice_NS-10493.pdf 318 KB 10 Feb 11:21 Standard v1",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "10 Feb 11:21",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/invoice_NS-10493.pdf",
+            "file_name": "invoice_NS-10493.pdf",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:invoice_NS-10493"
+        },
+        {
+          "resource_id": "parcel_damage_7713",
+          "system_id": "export_service",
+          "data_category": "SUPPORT_ATTACHMENT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "parcel_damage_7713.jpg 2.4 MB 12 Feb 10:08 Standard v1",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "12 Feb 10:08",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/parcel_damage_7713.jpg",
+            "file_name": "parcel_damage_7713.jpg",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:parcel_damage_7713"
+        },
+        {
+          "resource_id": "customer_export_2026-02-10",
+          "system_id": "export_service",
+          "data_category": "USER_EXPORT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "customer_export_2026-02-10.zip 128 MB 10 Feb 23:14 Standard v1",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "10 Feb 23:14",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/customer_export_2026-02-10.zip",
+            "file_name": "customer_export_2026-02-10.zip",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:customer_export_2026-02-10"
+        },
+        {
+          "resource_id": "customer_export_2026-02-12",
+          "system_id": "export_service",
+          "data_category": "USER_EXPORT",
+          "state": "PRESENT",
+          "identifiers": [],
+          "has_exposed_pii": false,
+          "details": {
+            "visible_text": "customer_export_2026-02-12.zip 131 MB 12 Feb 21:56 Standard v1",
+            "shared_context": "Nimbus Object Storage northstar-customer-data eu-west-1 / support-attachments / 2026 / 02",
+            "timestamp_text": "12 Feb 21:56",
+            "confidence": 0.95,
+            "limitations": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path.",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/object_storage_browser_20260213.png",
+            "source_sha256": "96e9a191380c29b9e0ab997007268c4cd6353cb6721ebd1ed4a32599d8d37e04",
+            "object_key": "support-attachments/2026/02/customer_export_2026-02-12.zip",
+            "file_name": "customer_export_2026-02-12.zip",
+            "normalization": "Resource IDs are normalized from visible filenames; system_id=export_service is inferred from the object-storage console. The object_key prefix is visible in the storage path."
+          },
+          "provenance": "gemini:evidence_46:customer_export_2026-02-12"
+        }
+      ]
+    },
+    "evidence_60": {
+      "file_path": "evidence/images/marketing_profile_console.png",
+      "sha256": "51fa0e6a38f8fa3629ba1b0d0b90b4ed139715956b97bfd09a6f1a6232c15df5",
+      "origin": "marketing_platform",
+      "captured_at": "2026-09-16T07:20:00Z",
+      "observations": [
+        {
+          "resource_id": "marketing_001",
+          "system_id": "marketing_platform",
+          "data_category": "MARKETING_PROFILE",
+          "state": "PRESENT",
+          "identifiers": [
+            "+82 10-5837-9451",
+            "Soo-jin Park",
+            "marketing_001",
+            "sj.park@naver.com"
+          ],
+          "has_exposed_pii": true,
+          "details": {
+            "visible_text": "Soo-jin Park Live marketing_001 · sj.park@naver.com · +82 10-5837-9451 Market South Korea Language Korean Email opt-in Yes SMS opt-in No Last refreshed 15 Sep 2026 23:40 UTC Audience Returning customers — East Asia Segments Repeat customer · Home & lifestyle · Mobile shopper Preferred categories Desk accessories · Drinkware Last campaign Autumn offers Open rate 32.4% Click rate 6.8%",
+            "shared_context": "Northstar Shop / Audience Operations",
+            "timestamp_text": "15 Sep 2026 23:40 UTC",
+            "confidence": 0.95,
+            "limitations": "Marketing record fields/email/phone are visible; PRESENT is the normalized existence state (the screen shows Live and email opt-in Yes).",
+            "gemini_model": "gemini-3.8-flash",
+            "prompt_version": "image-v1",
+            "source_path": "evidence/images/marketing_profile_console.png",
+            "source_sha256": "51fa0e6a38f8fa3629ba1b0d0b90b4ed139715956b97bfd09a6f1a6232c15df5",
+            "normalization": "Marketing record fields/email/phone are visible; PRESENT is the normalized existence state (the screen shows Live and email opt-in Yes)."
+          },
+          "provenance": "gemini:evidence_60:marketing_001"
+        }
+      ]
+    }
+  },
+  "verification": {
+    "method": "Independent visual inspection of all 11 source PNGs against the cached observations",
+    "date": "2026-10-25",
+    "literal_checks": "Resource IDs, account/owner emails, audit IDs, order references, filenames, categories, and visible values were checked against the screenshots.",
+    "normalized_fields_flagged": "Canonical system IDs, filename-derived resource IDs, tombstone_user_17, generic PRESENT states, and backup ACTIVE states are normalization choices recorded in each observation's limitations."
+  },
+  "exclusions": [
+    "support_9538 from evidence_04 is visible only as a page-level support reference/activity summary with no visible support-message body or direct support-record identifier; it is not normalized into a SUPPORT_MESSAGE record."
+  ]
+}

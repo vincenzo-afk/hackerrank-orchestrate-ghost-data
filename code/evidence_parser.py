@@ -6,6 +6,7 @@ All file paths resolved relative to repository root.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -19,7 +20,7 @@ from typing import Optional, Any
 
 import pypdf
 
-from image_catalog import IMAGE_EVIDENCE_CATALOG
+from media_cache import load_media_cache, observations_for
 
 # ---------------------------------------------------------------------------
 # Normalized Evidence Data Model
@@ -1166,7 +1167,62 @@ def _parse_pdf_evidence(
             )
         )
 
+    # 4. General legal-hold register rows.  The register is a table; extract
+    # every row that carries an order reference and a retained-until date
+    # rather than relying on a filename-specific branch.
+    legal_row_re = re.compile(
+        r"(ORD-\d+)\s*\|\s*(user_\d+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|"
+        r"\s*([^|]+?)\s*\|\s*Retain until\s+([^|]+?)\s*\|\s*([A-Z]{2})"
+    )
+    for match in legal_row_re.finditer(text):
+        order_id, user_id, reason, row_date, amount, retain_text, market = (
+            part.strip() for part in match.groups()
+        )
+        retained_until = None
+        try:
+            retained_until = datetime.strptime(retain_text, "%d %b %Y").replace(
+                tzinfo=timezone.utc
+            ).isoformat()
+        except ValueError:
+            retained_until = None
+        details = {
+            "order_reference": order_id,
+            "retention_reason": reason,
+            "row_date": row_date,
+            "amount": amount,
+            "market": market,
+            "retained_until_raw": retain_text,
+        }
+        if retained_until:
+            details["retained_until"] = retained_until
+        records.append(
+            ObservedRecord(
+                evidence_id=file_id,
+                file_path=file_path,
+                captured_at=captured_at,
+                origin=origin,
+                system_id="legal_service",
+                resource_id=order_id,
+                data_category="LEGAL_HOLD_RECORD",
+                state="PRESENT",
+                has_exposed_pii=False,
+                identifiers={user_id},
+                details=details,
+                provenance=f"pdf:{file_path.name}:{order_id}",
+            )
+        )
+
     return records
+
+
+_MEDIA_CACHE: Optional[dict[str, Any]] = None
+
+
+def _get_media_cache() -> dict[str, Any]:
+    global _MEDIA_CACHE
+    if _MEDIA_CACHE is None:
+        _MEDIA_CACHE = load_media_cache()
+    return _MEDIA_CACHE
 
 
 def _parse_image_evidence(
@@ -1175,40 +1231,54 @@ def _parse_image_evidence(
     origin: str,
     captured_at: datetime,
 ) -> list[ObservedRecord]:
+    """Read the actual image bytes and load only a SHA-matching cache entry.
+
+    The cache contains Gemini-derived observations with source provenance.  It
+    contains no deletion statuses or remediation sequences.  A changed image
+    invalidates the entry; no stale observation is reused.
+    """
     records: list[ObservedRecord] = []
-    catalog_entry = IMAGE_EVIDENCE_CATALOG.get(file_id)
-    if not catalog_entry:
-        return records
-
-    sys_id = catalog_entry["system_id"]
-    for r in catalog_entry["records"]:
-        res_id = r["resource_id"]
-        cat = r["data_category"]
-        state = r["status"]
-        ids: set[str] = set()
-        for k in ["customer_reference", "subject_reference", "email", "customer_email", "owner_email", "requester_email", "phone", "full_name", "display_name", "requester_name"]:
-            val = r.get(k)
-            if val:
-                ids.add(val)
-
-        has_pii = bool(r.get("email") or r.get("phone") or r.get("customer_email") or r.get("requester_email"))
+    source_bytes = file_path.read_bytes()
+    observations = observations_for(
+        file_id, source_bytes, cache=_get_media_cache()
+    )
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    for observation in observations:
+        if not isinstance(observation, dict):
+            continue
+        resource_id = str(observation.get("resource_id") or "").strip()
+        system_id = str(observation.get("system_id") or "").strip()
+        category = str(observation.get("data_category") or "").strip()
+        state = str(observation.get("state") or "").strip()
+        if not resource_id or not system_id or not category or not state:
+            continue
+        identifiers = {
+            str(value)
+            for value in (observation.get("identifiers") or [])
+            if str(value).strip()
+        }
+        details = dict(observation.get("details") or {})
+        details.setdefault("source_sha256", source_sha)
+        details.setdefault("source_path", str(file_path))
         records.append(
             ObservedRecord(
                 evidence_id=file_id,
                 file_path=file_path,
                 captured_at=captured_at,
                 origin=origin,
-                system_id=sys_id,
-                resource_id=res_id,
-                data_category=cat,
+                system_id=system_id,
+                resource_id=resource_id,
+                data_category=category,
                 state=state,
-                has_exposed_pii=has_pii,
-                identifiers=ids,
-                details=r,
-                provenance=f"image_catalog:{res_id}",
+                has_exposed_pii=bool(observation.get("has_exposed_pii")),
+                identifiers=identifiers,
+                details=details,
+                provenance=str(
+                    observation.get("provenance")
+                    or f"media_cache:{file_id}:{resource_id}"
+                ),
             )
         )
-
     return records
 
 
