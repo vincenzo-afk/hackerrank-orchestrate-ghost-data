@@ -26,6 +26,9 @@ from media_cache import load_media_cache, observations_for
 # Normalized Evidence Data Model
 # ---------------------------------------------------------------------------
 
+class EvidenceParseError(RuntimeError):
+    """A structured evidence item could not be interpreted safely."""
+
 @dataclass
 class ObservedRecord:
     evidence_id: str
@@ -134,6 +137,7 @@ _ALL_CATEGORIES = {
 
 _RESULT_STATES = {
     "FOUND": "PRESENT",
+    "HIT": "PRESENT",
     "IDENTIFIABLE": "PRESENT",
     "PRESENT": "PRESENT",
     "NOT_FOUND": "ABSENT",
@@ -147,6 +151,7 @@ _RESULT_STATES = {
     "DISABLED": "DISABLED",
     "BLOCKED": "BLOCKED",
 }
+_ACCOUNT_STATUSES = {"ACTIVE", "DELETION_PENDING", "DELETED", "PURGED", "ERASED"}
 
 # Identifier-bearing fields found across SQL, JSON, log, PDF and image evidence.
 _ID_FIELDS = (
@@ -290,7 +295,10 @@ def _category_for(
             if cat:
                 return cat
     cat = _category_from_hint(system_id, resource_id)
-    return cat or "USER_PROFILE"
+    # An unmapped hint must not become a deletable account profile.  The
+    # policy layer will treat this sentinel as an unsupported category and
+    # fail the case closed.
+    return cat or "UNKNOWN_CATEGORY"
 
 
 def _state_for_record(
@@ -298,14 +306,28 @@ def _state_for_record(
     item: dict[str, Any],
     raw_result: str = "",
 ) -> str:
-    """Derive the observed state for a record from its fields."""
+    """Derive the observed state for a record from its fields.
+
+    An explicit NOT_FOUND/DELETED/MISSING result is authoritative absence.  It
+    must not be rewritten into a compliant-looking PRESENT, REDACTED, or
+    ANONYMIZED state by a category-specific default.
+    """
     result = _clean_value(raw_result).upper()
     state = _RESULT_STATES.get(result, "")
 
+    if result and not state:
+        return "UNKNOWN"
+
+    if state == "ABSENT":
+        return "ABSENT"
+
     if category == "USER_PROFILE":
         status = _clean_value(item.get("account_status")).upper()
-        if status in ("DELETED", "PURGED", "ERASED"):
-            return "ABSENT"
+        if status:
+            if status in ("DELETED", "PURGED", "ERASED"):
+                return "ABSENT"
+            if status not in _ACCOUNT_STATUSES:
+                return "UNKNOWN"
         return state or "PRESENT"
 
     if category == "SUPPORT_MESSAGE":
@@ -315,11 +337,8 @@ def _state_for_record(
             return "REDACTED"
         if _has_direct_pii(item):
             return "PRESENT"
-        try:
-            if _text_ids(item):
-                return "PRESENT"
-        except NameError:  # pragma: no cover - helpers are defined below
-            pass
+        if _text_ids(item):
+            return "PRESENT"
         return "REDACTED"
 
     if category == "SUPPORT_ATTACHMENT":
@@ -330,14 +349,16 @@ def _state_for_record(
             return "ANONYMIZED"
         attributable = any(
             _clean_value(item.get(k))
-            for k in ("user_id", "customer_reference", "email", "phone", "email_hash")
+            for k in ("user_id", "customer_reference", "customer_email",
+                      "owner_email", "email", "phone", "email_hash")
         )
         return "PRESENT" if attributable else "ANONYMIZED"
 
     if category == "ACCOUNT_TOMBSTONE":
         direct = any(
             _clean_value(item.get(k))
-            for k in ("name", "full_name", "email", "phone", "email_hash")
+            for k in ("name", "full_name", "display_name", "customer_email",
+                      "owner_email", "email", "phone", "email_hash")
         )
         return "PRESENT" if direct else "REDACTED"
 
@@ -520,10 +541,14 @@ def _parse_sql_evidence(
                 if "record_json" in row_dict and row_dict.get("record_json"):
                     try:
                         item = json.loads(row_dict["record_json"])
-                    except Exception:
-                        continue
+                    except Exception as exc:
+                        raise EvidenceParseError(
+                            f"{file_id}: invalid record_json in {tbl}:{res_id}"
+                        ) from exc
                     if not isinstance(item, dict):
-                        continue
+                        raise EvidenceParseError(
+                            f"{file_id}: record_json in {tbl}:{res_id} is not an object"
+                        )
                     item.setdefault("resource_id", res_id)
                     origin_system = row_dict.get("origin_system", "")
                     system_id = _sql_system_for_table(tbl, origin_system)
@@ -628,19 +653,28 @@ def _parse_json_evidence(
     records: list[ObservedRecord] = []
     with open(file_path, "r", encoding="utf-8") as jf:
         data = json.load(jf)
+    if not isinstance(data, dict):
+        raise EvidenceParseError(f"{file_id}: top-level JSON is not an object")
     captured_at = _observation_time(data, captured_at)
 
     # 1. Per-service resource exports (evidence_62/65/.../92).
-    for sname, scontent in (data.get("service_exports") or {}).items():
+    service_exports = data.get("service_exports") or {}
+    if not isinstance(service_exports, dict):
+        raise EvidenceParseError(f"{file_id}: service_exports is not an object")
+    for sname, scontent in service_exports.items():
         if not isinstance(scontent, dict):
-            continue
+            raise EvidenceParseError(f"{file_id}: service export {sname!r} is not an object")
         norm_sys = _normalize_system_id(sname)
         for collection, items in scontent.items():
             if not isinstance(items, list):
-                continue
+                raise EvidenceParseError(
+                    f"{file_id}: service export {sname}.{collection} is not a list"
+                )
             for item in items:
                 if not isinstance(item, dict):
-                    continue
+                    raise EvidenceParseError(
+                        f"{file_id}: service export {sname}.{collection} contains a non-object item"
+                    )
                 res_id = _clean_value(item.get("resource_id"))
 
                 if collection == "profile_lookups":
@@ -719,16 +753,21 @@ def _parse_json_evidence(
 
     # 2. Snapshot bundles and direct record lists.
     snapshots = data.get("snapshots")
+    if snapshots is not None and not isinstance(snapshots, list):
+        raise EvidenceParseError(f"{file_id}: snapshots is not a list")
     if isinstance(snapshots, list):
         for snap in snapshots:
             if not isinstance(snap, dict):
-                continue
+                raise EvidenceParseError(f"{file_id}: snapshot entry is not an object")
             system_id = _normalize_system_id(snap.get("data_store", ""))
             collection = snap.get("collection", "")
             snapshot_time = _observation_time(snap, captured_at)
-            for item in snap.get("records", []) or []:
+            snapshot_records = snap.get("records", []) or []
+            if not isinstance(snapshot_records, list):
+                raise EvidenceParseError(f"{file_id}: snapshot records is not a list")
+            for item in snapshot_records:
                 if not isinstance(item, dict):
-                    continue
+                    raise EvidenceParseError(f"{file_id}: snapshot record is not an object")
                 hint = collection
                 if collection == "operational_record_history":
                     system_id = _normalize_system_id(
@@ -751,12 +790,14 @@ def _parse_json_evidence(
         return records
 
     raw_records = data.get("records")
+    if raw_records is not None and not isinstance(raw_records, list):
+        raise EvidenceParseError(f"{file_id}: records is not a list")
     if isinstance(raw_records, list):
         source = data.get("source") or data.get("origin") or ""
         collection = data.get("collection") or ""
         for item in raw_records:
             if not isinstance(item, dict):
-                continue
+                raise EvidenceParseError(f"{file_id}: record is not an object")
             item_system = item.get("system")
             if item_system:
                 system_id = _normalize_system_id(str(item_system))
@@ -803,6 +844,11 @@ def _parse_text_handover_evidence(
             note = note.strip()
             ids = {note} if note and note != "no direct identifier" else set()
 
+            if cat not in _ALL_CATEGORIES and cat != "DATA_FLOW":
+                raise EvidenceParseError(
+                    f"{file_id}: unsupported handover category {cat!r} for {res_id}"
+                )
+
             # Map raw state to allowed states
             if raw_state == "NOT_FOUND":
                 state = "ABSENT"
@@ -823,8 +869,9 @@ def _parse_text_handover_evidence(
                 state = raw_state
                 has_pii = False
             else:
-                state = raw_state
-                has_pii = False
+                raise EvidenceParseError(
+                    f"{file_id}: unsupported handover state {raw_state!r} for {res_id}"
+                )
 
             records.append(
                 ObservedRecord(
@@ -905,7 +952,7 @@ def _parse_log_evidence(
     trace_ids: dict[str, set[str]] = {}
 
     with open(file_path, "r", encoding="utf-8", errors="replace") as lf:
-        for raw in lf:
+        for line_no, raw in enumerate(lf, 1):
             line = raw.strip()
             if not line:
                 continue
@@ -919,10 +966,13 @@ def _parse_log_evidence(
                     start = line.index("{")
                     end = line.rindex("}") + 1
                     data = json.loads(line[start:end])
-                    if isinstance(data, dict):
-                        fields.update(data)
-                except Exception:
-                    pass
+                    if not isinstance(data, dict):
+                        raise ValueError("embedded JSON is not an object")
+                    fields.update(data)
+                except Exception as exc:
+                    raise EvidenceParseError(
+                        f"{file_id}: invalid embedded JSON at log line {line_no}"
+                    ) from exc
 
             kvs = dict(kv_re.findall(line))
             # Some exporters escape the quotes inside message="..." (\"key=value\").
@@ -1026,6 +1076,7 @@ def _parse_log_evidence(
         rows = _clean_value(fields.get("rows"))
         total_hits = _clean_value(fields.get("total_hits"))
         http_status = _clean_value(fields.get("http_status"))
+        raw_result_known = not raw_result or raw_result.upper() in _RESULT_STATES
 
         state = _state_for_record(category, fields, raw_result)
         if category == "USER_PROFILE":
@@ -1039,47 +1090,60 @@ def _parse_log_evidence(
             elif raw_result.upper() in ("HIT", "FOUND"):
                 state = "PRESENT"
         elif category == "SUPPORT_MESSAGE":
-            if event in ("message_pii_scan", "attachment_pii_scan", "attachment_scan_completed"):
-                state = "PRESENT"
-            elif _has_direct_pii(fields) or _text_ids(fields):
-                state = "PRESENT"
-            elif rows.isdigit() and int(rows) > 0:
-                state = "PRESENT" if (_has_direct_pii(fields) or _text_ids(fields)) else "REDACTED"
-            else:
-                state = _state_for_record(category, fields, raw_result)
+            if state != "ABSENT":
+                if event in ("message_pii_scan", "attachment_pii_scan", "attachment_scan_completed"):
+                    state = "PRESENT"
+                elif _has_direct_pii(fields) or _text_ids(fields):
+                    state = "PRESENT"
+                elif rows.isdigit() and int(rows) > 0:
+                    state = "PRESENT" if (_has_direct_pii(fields) or _text_ids(fields)) else "REDACTED"
+                else:
+                    state = _state_for_record(category, fields, raw_result)
         elif category == "SUPPORT_ATTACHMENT":
-            state = "PRESENT"
-        elif category == "ANALYTICS_PROFILE":
-            direct = _clean_value(fields.get("direct_identifiers"))
-            if direct.isdigit() and int(direct) > 0:
+            if state != "ABSENT":
                 state = "PRESENT"
-            elif event in ("analytics_identity_scan", "analytics_profile_scan"):
-                state = "PRESENT"
-            elif _has_direct_ids(fields):
-                state = "PRESENT"
-            else:
-                state = "ANONYMIZED"
+        elif category in ("ANALYTICS_PROFILE", "PRODUCT_TELEMETRY"):
+            if state != "ABSENT":
+                direct = _clean_value(fields.get("direct_identifiers"))
+                if direct.isdigit() and int(direct) > 0:
+                    state = "PRESENT"
+                elif event in ("analytics_identity_scan", "analytics_profile_scan"):
+                    state = "PRESENT"
+                elif _has_direct_ids(fields):
+                    state = "PRESENT"
+                else:
+                    state = "ANONYMIZED"
         elif category == "DATA_FLOW":
-            enabled = _clean_value(fields.get("enabled")).lower()
-            if enabled in ("true", "false"):
-                state = "ACTIVE" if enabled == "true" else "DISABLED"
+            if state != "ABSENT":
+                enabled = _clean_value(fields.get("enabled")).lower()
+                if enabled in ("true", "false"):
+                    state = "ACTIVE" if enabled == "true" else "DISABLED"
         elif category == "BACKUP_ARCHIVE":
-            block = _clean_value(fields.get("deletion_block")).lower()
-            allowed = _clean_value(fields.get("restore_allowed")).lower()
-            if allowed in ("true", "false"):
-                state = "ACTIVE" if allowed == "true" else "BLOCKED"
-            elif block == "true":
-                state = "BLOCKED"
-            elif block == "false" or _clean_value(fields.get("eligible")).lower() == "true":
-                state = "ACTIVE"
+            if state != "ABSENT":
+                block = _clean_value(fields.get("deletion_block")).lower()
+                allowed = _clean_value(fields.get("restore_allowed")).lower()
+                if allowed in ("true", "false"):
+                    state = "ACTIVE" if allowed == "true" else "BLOCKED"
+                elif block == "true":
+                    state = "BLOCKED"
+                elif block == "false" or _clean_value(fields.get("eligible")).lower() == "true":
+                    state = "ACTIVE"
         elif category == "USER_EXPORT":
-            available = _clean_value(fields.get("available")).lower()
-            if available in ("true", "false"):
-                state = "PRESENT" if available == "true" else "ABSENT"
+            if state != "ABSENT":
+                available = _clean_value(fields.get("available")).lower()
+                if available in ("true", "false"):
+                    state = "PRESENT" if available == "true" else "ABSENT"
         elif category == "SECURITY_AUDIT_LOG":
-            state = "PRESENT"
+            if state != "ABSENT":
+                state = "PRESENT"
         elif category == "MARKETING_PROFILE":
-            state = "PRESENT"
+            if state != "ABSENT":
+                state = "PRESENT"
+
+        # A category-specific branch must not rescue an unrecognized raw
+        # result into a policy-significant state.
+        if raw_result and not raw_result_known:
+            state = "UNKNOWN"
 
         records.append(
             _make_record(
@@ -1215,16 +1279,6 @@ def _parse_pdf_evidence(
     return records
 
 
-_MEDIA_CACHE: Optional[dict[str, Any]] = None
-
-
-def _get_media_cache() -> dict[str, Any]:
-    global _MEDIA_CACHE
-    if _MEDIA_CACHE is None:
-        _MEDIA_CACHE = load_media_cache()
-    return _MEDIA_CACHE
-
-
 def _parse_image_evidence(
     file_id: str,
     file_path: Path,
@@ -1239,8 +1293,9 @@ def _parse_image_evidence(
     """
     records: list[ObservedRecord] = []
     source_bytes = file_path.read_bytes()
+    cache = load_media_cache(strict=True)
     observations = observations_for(
-        file_id, source_bytes, cache=_get_media_cache()
+        file_id, source_bytes, cache=cache, strict=True
     )
     source_sha = hashlib.sha256(source_bytes).hexdigest()
     for observation in observations:
@@ -1319,7 +1374,10 @@ class EvidenceCorpus:
             raise ValueError(f"not_before must be timezone-aware: {not_before!r}")
 
         matched: list[ObservedRecord] = []
-        seen_keys: set[tuple[str, str, datetime]] = set()
+        # A resource can have multiple categories at the same timestamp (for
+        # example a support message and its attachment).  Category is part of
+        # the observation identity and must not be collapsed here.
+        seen_keys: set[tuple[str, str, datetime, str]] = set()
         normalized_ids = {ident.strip().lower() for ident in identifiers}
         linked_resources: set[tuple[str, str]] = set()
 
@@ -1333,7 +1391,7 @@ class EvidenceCorpus:
                     continue
                 if not_before is not None and rec.captured_at < not_before:
                     continue
-                k = (rec.system_id, rec.resource_id, rec.captured_at)
+                k = (rec.system_id, rec.resource_id, rec.captured_at, rec.data_category)
                 if k not in seen_keys:
                     seen_keys.add(k)
                     matched.append(rec)
@@ -1386,5 +1444,9 @@ def load_evidence_corpus(dataset_dir: Path) -> EvidenceCorpus:
             all_records.extend(_parse_pdf_evidence(file_id, full_path, origin, captured_at))
         elif ext == ".png":
             all_records.extend(_parse_image_evidence(file_id, full_path, origin, captured_at))
+        else:
+            raise EvidenceParseError(
+                f"{file_id}: unsupported evidence format {ext or '<none>'} for {rel_path}"
+            )
 
     return EvidenceCorpus(all_records)
