@@ -45,6 +45,15 @@ class AuditStep:
         }
 
 
+# False conditional branches can have compliant evidence without any action
+# being required by the supplied CSV.  Verification-only steps are allowed for
+# those already-compliant states; no remediation is invented.
+_FALSE_CONDITION_VERIFICATIONS = {
+    "ANALYTICS_PROFILE": ("ANONYMIZED", "VERIFY_RECORD_ANONYMIZED"),
+    "PRODUCT_TELEMETRY": ("ANONYMIZED", "VERIFY_RECORD_ANONYMIZED"),
+    "EMAIL_DELIVERY_LOG": ("REDACTED", "VERIFY_RECORD_REDACTED"),
+}
+
 # Operation ordering defined in problem_statement.md & AGENTS.md §6.4 & §126
 FINDING_ORDER = [
     "REPORT_REMAINING_RECORD",
@@ -115,6 +124,7 @@ class CaseAuditResult:
     steps: list[AuditStep]
     findings: list[ObservedRecord] = field(default_factory=list)
     verified_clean: list[ObservedRecord] = field(default_factory=list)
+    evidence_gaps: list[str] = field(default_factory=list)
 
 
 def _sort_steps(steps: list[AuditStep]) -> list[AuditStep]:
@@ -194,6 +204,11 @@ def _records_from_activity_links(
     if not subject_patterns:
         return []
 
+    normalized_user_ids = {
+        str(value).strip().lower()
+        for value in user_identifiers
+        if str(value).strip()
+    }
     attributed: list[ObservedRecord] = []
     for row in system_activity:
         if row.get("event_type") != "LINK_RESOURCE_IDENTITY":
@@ -209,7 +224,12 @@ def _records_from_activity_links(
 
         match: Optional[ObservedRecord] = None
         for rec in corpus.records:
-            if rec.captured_at > audit_at:
+            # The catalog link may establish subject/resource membership, but
+            # it cannot turn an old state observation into a post-request one.
+            # Both the link and the supporting record must be admissible.
+            if rec.captured_at > audit_at or (
+                not_before is not None and rec.captured_at < not_before
+            ):
                 continue
             object_key = str(rec.details.get("object_key") or "")
             same_resource = bool(resource_id) and rec.resource_id == resource_id
@@ -220,10 +240,36 @@ def _records_from_activity_links(
                 match = rec
         if match is None:
             continue
+
+        # A link is a claim, not proof.  Direct identifiers may corroborate it;
+        # an explicit file/object link can also establish an anonymous record.
+        # Reject a record whose strong identifiers contradict the subject.
+        def _strong(value: str) -> bool:
+            return (
+                "@" in value
+                or value.startswith("+")
+                or value.startswith("user_")
+                or (len(value) == 64 and all(ch in "0123456789abcdef" for ch in value))
+            )
+
+        direct_identity = bool(match.normalized_identifiers & normalized_user_ids)
+        strong_conflict = any(
+            _strong(value)
+            and value not in normalized_user_ids
+            for value in match.normalized_identifiers
+        )
+        if strong_conflict and not direct_identity:
+            continue
+        if not direct_identity and not file_hint:
+            # An anonymous record with no corroborating identifier needs an
+            # explicit file/object link, not merely an activity assertion.
+            continue
+
+        # Preserve the actual observation time.  The link event can establish
+        # membership, but it is not a new state observation.
         attributed.append(
             replace(
                 match,
-                captured_at=event_time,
                 identifiers=set(match.identifiers) | set(user_identifiers),
                 provenance=f"activity:{row.get('activity_id')}",
             )
@@ -289,15 +335,21 @@ def reconstruct_case_state(
     require_evidence: bool = False,
     not_before: Optional[datetime] = None,
     policy_engine: Optional[PolicyEngine] = None,
+    require_account_closure: bool = True,
 ) -> CaseAuditResult:
     """Reconstruct system state for a given case and generate the audit plan.
 
     ``require_evidence`` makes a COMPLETE verdict conditional on at least one
     admissible compliant observation. ``not_before`` excludes evidence captured
-    before the deletion request, which describes an earlier state. The defaults
-    preserve the historical behaviour for callers that only need step
-    generation; the pipeline sets both so no case is declared COMPLETE on stale
-    or absent evidence.
+    before the deletion request, which describes an earlier state.
+
+    ``require_account_closure`` additionally requires evidence that the account
+    itself is closed: either a USER_PROFILE verified ABSENT or a clean
+    ACCOUNT_TOMBSTONE verified REDACTED.  The named COMPLETE rule is “every
+    relevant copy”; the account profile is treated as a relevant copy because
+    every in-scope request is an account-deletion request.  This closure gate
+    is therefore an inferred minimum, not a separately named CSV condition.
+    Categories with no observation are still not treated as proven absent.
     """
     if not is_deletion:
         return CaseAuditResult(
@@ -318,40 +370,51 @@ def reconstruct_case_state(
             system_activity, user_identifiers, audit_at, not_before, corpus
         )
 
-    # 2. De-duplicate multiple observations of the same (system_id, resource_id).
-    # The newest admissible evidence wins; equal capture times resolve toward the
-    # non-compliant reading so ambiguity cannot create a false COMPLETE.
-    latest_by_resource: dict[tuple[str, str], ObservedRecord] = {}
+    # 2. De-duplicate observations of the same (system_id, resource_id, category).
+    # A support ticket can legitimately have both SUPPORT_MESSAGE and
+    # SUPPORT_ATTACHMENT records; resource-only deduplication would lose one
+    # policy action.  The newest admissible evidence wins; equal capture times
+    # resolve toward the non-compliant reading.
+    latest_by_key: dict[tuple[str, str, str], ObservedRecord] = {}
     for r in records:
-        key = (r.system_id, r.resource_id)
-        current = latest_by_resource.get(key)
+        key = (r.system_id, r.resource_id, r.data_category)
+        current = latest_by_key.get(key)
         if current is None:
-            latest_by_resource[key] = r
+            latest_by_key[key] = r
         elif r.captured_at > current.captured_at:
-            latest_by_resource[key] = r
+            latest_by_key[key] = r
         elif r.captured_at == current.captured_at:
             if _STATE_PRIORITY.get(r.state, 0) > _STATE_PRIORITY.get(current.state, 0):
-                latest_by_resource[key] = r
+                latest_by_key[key] = r
 
-    for key, latest in list(latest_by_resource.items()):
+    # Keep the newest record for policy conditions, and choose the earliest
+    # same-category record confirming the same effective state for a stable
+    # citation.  The two roles must not be conflated.
+    policy_by_key: dict[tuple[str, str, str], ObservedRecord] = {}
+    citation_by_key: dict[tuple[str, str, str], ObservedRecord] = {}
+    for key, latest in latest_by_key.items():
         confirming = [
             r for r in records
-            if (r.system_id, r.resource_id) == key
+            if (r.system_id, r.resource_id, r.data_category) == key
             and _effective_state(r) == _effective_state(latest)
         ]
-        latest_by_resource[key] = min(confirming, key=lambda r: r.captured_at)
+        policy_by_key[key] = latest
+        citation_by_key[key] = min(confirming, key=lambda r: r.captured_at)
 
     findings: list[AuditStep] = []
     remediations: list[AuditStep] = []
     verifications: list[AuditStep] = []
+    evidence_gaps: list[str] = []
     retention_gap = False
     policy_gap = False
+    state_gap = False
+    account_closed = False
 
-    # 3. Apply the supplied policy rules to each observed resource.
-    for (sys_id, res_id), rec in sorted(latest_by_resource.items()):
-        cat = rec.data_category
-        eid = rec.evidence_id
-        state = _effective_state(rec)
+    # 3. Apply the supplied policy rules to every observed resource/category.
+    for (sys_id, res_id, cat), policy_rec in sorted(policy_by_key.items()):
+        citation_rec = citation_by_key[(sys_id, res_id, cat)]
+        eid = citation_rec.evidence_id
+        state = _effective_state(policy_rec)
 
         if cat == "DATA_FLOW":
             # Data flows are operational mechanisms rather than a rule category.
@@ -361,6 +424,12 @@ def reconstruct_case_state(
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED"))
             elif state == "DISABLED":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_DATA_FLOW_DISABLED", "DISABLED", eid))
+            elif state == "ABSENT":
+                # No observed flow exists; there is nothing to disable.
+                pass
+            else:
+                state_gap = True
+                evidence_gaps.append(f"unsupported DATA_FLOW state {state!r} for {res_id}")
             continue
 
         if cat == "BACKUP_ARCHIVE":
@@ -371,21 +440,48 @@ def reconstruct_case_state(
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED"))
             elif state == "BLOCKED":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RESTORE_BLOCKED", "BLOCKED", eid))
+            elif state == "ABSENT":
+                retention_gap = True
+                evidence_gaps.append(f"required backup archive is not present: {res_id}")
+            else:
+                state_gap = True
+                evidence_gaps.append(f"unsupported BACKUP_ARCHIVE state {state!r} for {res_id}")
             continue
 
-        decision = policy.decide(rec, audit_at, user_identifiers)
+        decision = policy.decide(policy_rec, audit_at, user_identifiers)
+        if decision.condition_value is False:
+            verification = _FALSE_CONDITION_VERIFICATIONS.get(cat)
+            if verification is not None and state == verification[0]:
+                expected_state, operation = verification
+                verifications.append(
+                    _step("VERIFICATION", sys_id, res_id, operation, expected_state, eid)
+                )
+            else:
+                policy_gap = True
+                evidence_gaps.append(
+                    f"policy gap for {cat}/{res_id}: {decision.reason}"
+                )
+            continue
         if not decision.supported or (decision.rule_id and not decision.action):
             policy_gap = True
+            evidence_gaps.append(
+                f"policy gap for {cat}/{res_id}: {decision.reason}"
+            )
             continue
         action = decision.action
 
         if action == "DELETE":
             if state == "ABSENT":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT", eid))
+                if cat == "USER_PROFILE":
+                    account_closed = True
             elif state in ("PRESENT", "REDACTED", "ANONYMIZED", "ACTIVE"):
                 findings.append(_step("FINDING", sys_id, res_id, "REPORT_REMAINING_RECORD", "PRESENT", eid))
                 remediations.append(_step("REMEDIATION", sys_id, res_id, "DELETE_RECORD", "ABSENT"))
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ABSENT", "ABSENT"))
+            else:
+                state_gap = True
+                evidence_gaps.append(f"unsupported DELETE state {state!r} for {res_id}")
 
         elif action == "REDACT":
             if state == "PRESENT":
@@ -394,6 +490,14 @@ def reconstruct_case_state(
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_REDACTED", "REDACTED"))
             elif state == "REDACTED":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_REDACTED", "REDACTED", eid))
+                if cat == "ACCOUNT_TOMBSTONE":
+                    account_closed = True
+            elif state == "ABSENT":
+                # Nothing remains to redact.
+                pass
+            else:
+                state_gap = True
+                evidence_gaps.append(f"unsupported REDACT state {state!r} for {res_id}")
 
         elif action == "ANONYMIZE":
             if state == "PRESENT":
@@ -402,6 +506,12 @@ def reconstruct_case_state(
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ANONYMIZED", "ANONYMIZED"))
             elif state == "ANONYMIZED":
                 verifications.append(_step("VERIFICATION", sys_id, res_id, "VERIFY_RECORD_ANONYMIZED", "ANONYMIZED", eid))
+            elif state == "ABSENT":
+                # Nothing attributable remains.
+                pass
+            else:
+                state_gap = True
+                evidence_gaps.append(f"unsupported ANONYMIZE state {state!r} for {res_id}")
 
         elif action == "RETAIN":
             if state == "PRESENT":
@@ -410,13 +520,29 @@ def reconstruct_case_state(
                 # A policy-required retained record is missing: the case cannot
                 # be proven complete, and no allowed operation can remediate it.
                 retention_gap = True
+                evidence_gaps.append(f"required retained record is not present: {res_id}")
+            else:
+                state_gap = True
+                evidence_gaps.append(f"unsupported RETAIN state {state!r} for {res_id}")
 
-    # 4. Determine overall deletion status
-    if findings or retention_gap or policy_gap:
+        else:
+            policy_gap = True
+            evidence_gaps.append(f"unsupported policy action {action!r} for {res_id}")
+
+    # 4. Require evidence that the account itself is closed.  Unobserved
+    # categories are not treated as absent; the result is an honest incomplete
+    # evidence gap rather than a misleading COMPLETE.
+    account_gap = bool(require_account_closure and not account_closed)
+    if account_gap:
+        evidence_gaps.append("account closure is not evidenced by an absent profile or clean tombstone")
+
+    # 5. Determine overall deletion status
+    if findings or retention_gap or policy_gap or state_gap or account_gap:
         status = "INCOMPLETE"
     elif require_evidence and not verifications:
         # No admissible evidence proves the compliant state.
         status = "INCOMPLETE"
+        evidence_gaps.append("no admissible compliant verification")
     else:
         status = "COMPLETE"
 
@@ -450,5 +576,6 @@ def reconstruct_case_state(
         case_id=case_id,
         deletion_status=status,
         steps=sorted_steps,
-        findings=list(latest_by_resource.values()),
+        findings=list(policy_by_key.values()),
+        evidence_gaps=evidence_gaps,
     )

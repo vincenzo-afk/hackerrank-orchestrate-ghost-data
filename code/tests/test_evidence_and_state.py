@@ -211,7 +211,7 @@ class TestMissingEvidence:
     """Test behavior when no evidence exists for an identifier or system."""
 
     def test_missing_evidence_does_not_hallucinate(self):
-        """Synthetic fixture: empty corpus must not invent resources or steps."""
+        """Synthetic fixture: an empty corpus cannot prove account closure."""
         corpus = EvidenceCorpus([])
         cutoff = _parse_iso("2026-05-01T10:00:00Z")
         res = reconstruct_case_state(
@@ -220,9 +220,11 @@ class TestMissingEvidence:
             is_deletion=True,
             user_identifiers={"nonexistent_user@domain.com"},
             corpus=corpus,
+            require_evidence=True,
         )
-        assert res.deletion_status == "COMPLETE"
+        assert res.deletion_status == "INCOMPLETE"
         assert res.steps == []
+        assert any("account closure" in gap for gap in res.evidence_gaps)
 
 
 # ---------------------------------------------------------------------------
@@ -461,6 +463,45 @@ class TestAccountTombstones:
 
 class TestEvidenceProvenanceAndContract:
     """Test evidence_id and ordering constraints."""
+
+    def test_post_request_link_cannot_relabel_pre_request_observation(self):
+        """A catalog link is not evidence that an old record still exists now."""
+        requested = _parse_iso("2026-06-10T00:00:00Z")
+        audit_at = _parse_iso("2026-06-12T00:00:00Z")
+        old = ObservedRecord(
+            evidence_id="old_snapshot",
+            file_path=Path("synthetic/old.json"),
+            captured_at=_parse_iso("2026-06-01T00:00:00Z"),
+            origin="account_service",
+            system_id="account_service",
+            resource_id="account_old_only",
+            data_category="USER_PROFILE",
+            state="PRESENT",
+            has_exposed_pii=True,
+            identifiers=set(),
+        )
+        corpus = EvidenceCorpus([old])
+        activity = [{
+            "activity_id": "link_after_request",
+            "event_type": "LINK_RESOURCE_IDENTITY",
+            "event_time": "2026-06-11T00:00:00Z",
+            "resource_id": "account_old_only",
+            "details": "subject user_temporal_1",
+        }]
+
+        result = reconstruct_case_state(
+            case_id="synthetic_pre_request_link",
+            audit_at=audit_at,
+            is_deletion=True,
+            user_identifiers={"user_temporal_1"},
+            corpus=corpus,
+            system_activity=activity,
+            require_evidence=True,
+            not_before=requested,
+        )
+
+        assert result.deletion_status == "INCOMPLETE"
+        assert result.steps == []
 
     def test_evidence_id_contract(self, dataset_bundle):
         """Findings and complete verifications cite evidence_id; remediation and future checks must be empty."""
